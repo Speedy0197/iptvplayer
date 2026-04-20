@@ -1,0 +1,16 @@
+services:
+  backend:
+    build: ./backend
+    container_name: iptv-backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - iptv_data:/data
+    environment:
+      - DB_PATH=/data/iptv.db
+      - PORT=8080
+      - JWT_SECRET=change-me-to-a-long-random-secret
+    restart: unless-stopped
+
+volumes:
+  iptv_data:

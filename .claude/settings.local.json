@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter create *)",
+      "Read(//Users/flo/flutter/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//Users/flo/**)",
+      "Bash(go mod *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(bunx @tauri-apps/cli icon public/logo.svg)",
+      "Bash(sudo rm *)",
+      "Bash(killall Dock)",
+      "Bash(cargo check *)",
+      "Bash(ffmpeg -version)",
+      "Read(//usr/local/bin/**)",
+      "Bash(brew list *)",
+      "WebSearch",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(xcode-select -p)",
+      "Bash(xcodebuild -version)",
+      "Bash(rustup target *)",
+      "Bash(cargo tauri *)",
+      "Bash(npx tauri *)",
+      "Bash(node_modules/.bin/tauri --version)",
+      "Bash(flutter --version)",
+      "Bash(xcrun simctl *)",
+      "Bash(flutter pub *)",
+      "Bash(flutter devices *)",
+      "Bash(open -a Simulator)",
+      "Bash(flutter run *)"
+    ]
+  }
+}
