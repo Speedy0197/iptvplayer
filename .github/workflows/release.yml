@@ -85,9 +85,21 @@ jobs:
     needs: [build-android, build-windows]
     runs-on: ubuntu-latest
     permissions:
-      actions: write
+      contents: read
+      pages: write
+      id-token: write
     steps:
-      - name: Trigger Pages deployment
-        run: gh workflow run deploy-pages.yml --ref "${{ github.ref_name }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
