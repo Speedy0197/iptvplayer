@@ -79,3 +79,15 @@ jobs:
         run: gh release upload "${{ github.ref_name }}" flutter_app/installer_output/iptv-player-windows.exe --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-pages:
+    name: Deploy GitHub Pages
+    needs: [build-android, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Trigger Pages deployment
+        run: gh workflow run deploy-pages.yml --ref "${{ github.ref_name }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

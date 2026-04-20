@@ -107,6 +107,7 @@
       padding: 20px;
       display: grid;
       gap: 14px;
+      align-content: start;
       transform: translateY(8px);
       opacity: 0;
       animation: cardIn 0.5s ease-out forwards;
@@ -395,14 +396,7 @@
         </article>
       </section>
 
-      <div class="note">
-        Build files are expected in the latest GitHub Release with these names:
-        <code>streampilot-android.apk</code> (Android TV), <code>streampilot-macos.dmg</code>, <code>streampilot-ios.ipa</code> (TestFlight).
-      </div>
 
-      <p class="footer">
-        All builds are created by running <code>./scripts/release.sh</code>. Set your TestFlight invite link in <code>docs/index.html</code> via <code>testFlightUrl</code>.
-      </p>
     </section>
   </main>
 
