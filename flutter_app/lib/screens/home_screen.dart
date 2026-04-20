@@ -459,6 +459,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     var selectedType = editing?.type ?? 'm3u';
     String? error;
+    var submitting = false;
 
     await showDialog<void>(
       context: context,
@@ -557,58 +558,96 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () async {
-                    try {
-                      final store = context.read<PlaylistStore>();
-                      final name = nameCtrl.text.trim();
-                      if (name.isEmpty) {
-                        throw const ApiException('Name is required');
-                      }
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          setState(() {
+                            submitting = true;
+                            error = null;
+                          });
 
-                      if (editing == null) {
-                        if (selectedType == 'm3u') {
-                          await store.createM3uPlaylist(
-                            name: name,
-                            m3uUrl: m3uUrlCtrl.text.trim(),
-                          );
-                        } else if (selectedType == 'xtream') {
-                          await store.createXtreamPlaylist(
-                            name: name,
-                            server: xtreamServerCtrl.text.trim(),
-                            username: xtreamUserCtrl.text.trim(),
-                            password: xtreamPassCtrl.text,
-                          );
-                        } else {
-                          await store.createVuplusPlaylist(
-                            name: name,
-                            ip: vuplusIpCtrl.text.trim(),
-                            port: vuplusPortCtrl.text.trim().isEmpty
-                                ? '80'
-                                : vuplusPortCtrl.text.trim(),
-                          );
-                        }
-                      } else {
-                        await store.updatePlaylist(
-                          id: editing.id,
-                          type: selectedType,
-                          name: name,
-                          m3uUrl: m3uUrlCtrl.text.trim(),
-                          xtreamServer: xtreamServerCtrl.text.trim(),
-                          xtreamUsername: xtreamUserCtrl.text.trim(),
-                          xtreamPassword: xtreamPassCtrl.text,
-                          vuplusIp: vuplusIpCtrl.text.trim(),
-                          vuplusPort: vuplusPortCtrl.text.trim(),
-                        );
-                      }
+                          try {
+                            final store = context.read<PlaylistStore>();
+                            final name = nameCtrl.text.trim();
+                            if (name.isEmpty) {
+                              throw const ApiException('Name is required');
+                            }
 
-                      if (ctx.mounted) Navigator.of(ctx).pop();
-                    } on ApiException catch (e) {
-                      setState(() => error = e.message);
-                    } catch (_) {
-                      setState(() => error = 'Could not save playlist');
-                    }
-                  },
-                  child: Text(editing == null ? 'Create' : 'Save'),
+                            if (editing == null) {
+                              if (selectedType == 'm3u') {
+                                await store.createM3uPlaylist(
+                                  name: name,
+                                  m3uUrl: m3uUrlCtrl.text.trim(),
+                                );
+                              } else if (selectedType == 'xtream') {
+                                await store.createXtreamPlaylist(
+                                  name: name,
+                                  server: xtreamServerCtrl.text.trim(),
+                                  username: xtreamUserCtrl.text.trim(),
+                                  password: xtreamPassCtrl.text,
+                                );
+                              } else {
+                                await store.createVuplusPlaylist(
+                                  name: name,
+                                  ip: vuplusIpCtrl.text.trim(),
+                                  port: vuplusPortCtrl.text.trim().isEmpty
+                                      ? '80'
+                                      : vuplusPortCtrl.text.trim(),
+                                );
+                              }
+                            } else {
+                              await store.updatePlaylist(
+                                id: editing.id,
+                                type: selectedType,
+                                name: name,
+                                m3uUrl: m3uUrlCtrl.text.trim(),
+                                xtreamServer: xtreamServerCtrl.text.trim(),
+                                xtreamUsername: xtreamUserCtrl.text.trim(),
+                                xtreamPassword: xtreamPassCtrl.text,
+                                vuplusIp: vuplusIpCtrl.text.trim(),
+                                vuplusPort: vuplusPortCtrl.text.trim(),
+                              );
+                            }
+
+                            if (!ctx.mounted) return;
+                            Navigator.of(ctx).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  editing == null
+                                      ? 'Playlist created'
+                                      : 'Playlist updated',
+                                ),
+                              ),
+                            );
+                          } on ApiException catch (e) {
+                            setState(() => error = e.message);
+                          } catch (_) {
+                            setState(() => error = 'Could not save playlist');
+                          } finally {
+                            if (ctx.mounted) {
+                              setState(() => submitting = false);
+                            }
+                          }
+                        },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (submitting) ...[
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        submitting
+                            ? (editing == null ? 'Creating...' : 'Saving...')
+                            : (editing == null ? 'Create' : 'Save'),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             );
