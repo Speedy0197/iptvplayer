@@ -10,10 +10,13 @@ MACOS_STAGE_DIR="$DIST_DIR/macos"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/release_apple.sh <version> <build-number>
+Usage: ./scripts/release_apple.sh <version> [build-number]
 
 Example:
   ./scripts/release_apple.sh 1.0.1 2
+  ./scripts/release_apple.sh 1.0.1
+
+If build-number is omitted, a UTC timestamp is used (YYYYMMDDHHMM).
 
 Requirements:
   - Run on macOS with Xcode and Flutter installed
@@ -34,18 +37,23 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -ne 2 ]]; then
+if [[ $# -lt 1 || $# -gt 2 ]]; then
   usage >&2
   exit 1
 fi
 
 VERSION="$1"
-BUILD_NUMBER="$2"
+BUILD_NUMBER="${2:-}"
 TAG="v$VERSION"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Version must be in semver format, for example 1.2.3" >&2
   exit 1
+fi
+
+if [[ -z "$BUILD_NUMBER" ]]; then
+  BUILD_NUMBER="$(date -u +%Y%m%d%H%M)"
+  echo "No build number provided. Using auto-generated build number: $BUILD_NUMBER"
 fi
 
 if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then

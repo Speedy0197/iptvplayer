@@ -78,6 +78,21 @@
       font-size: 1.06rem;
     }
 
+    .version-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid #d9ceb8;
+      background: #fbf5ea;
+      color: #4a4134;
+      font-size: 0.92rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
     .cards {
       margin-top: 28px;
       display: grid;
@@ -213,6 +228,7 @@
       <p class="subtitle">
         One page for setup + downloads across all supported platforms. Pick your device, download the latest build, and follow the install notes.
       </p>
+      <p class="version-pill">Latest version: <span id="latest-version">Loading...</span></p>
 
       <section class="cards" aria-label="Platform downloads">
         <article class="card">
@@ -294,6 +310,7 @@
       var repo = segments.length > 0 ? segments[0] : "YOUR_REPO";
 
       var latestBase = "https://github.com/" + owner + "/" + repo + "/releases/latest/download/";
+      var latestReleaseApi = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
 
       var assets = {
         android: "iptv-player-android.apk",
@@ -306,6 +323,21 @@
       document.getElementById("link-ios").href = latestBase + assets.ios;
       document.getElementById("link-macos").href = latestBase + assets.macos;
       document.getElementById("link-windows").href = latestBase + assets.windows;
+
+      fetch(latestReleaseApi)
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Unable to load latest release");
+          }
+          return response.json();
+        })
+        .then(function (release) {
+          var version = release && release.tag_name ? release.tag_name : "Unavailable";
+          document.getElementById("latest-version").textContent = version;
+        })
+        .catch(function () {
+          document.getElementById("latest-version").textContent = "Unavailable";
+        });
     })();
   </script>
 </body>
