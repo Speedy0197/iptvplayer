@@ -68,6 +68,13 @@ class PlaylistStore extends ChangeNotifier {
   bool loadingEpg = false;
   final Set<int> _refreshingPlaylistIds = <int>{};
 
+  String _favoriteGroupDeletePath(int playlistId, String groupName) {
+    final query = Uri(
+      queryParameters: {'playlist_id': '$playlistId', 'group_name': groupName},
+    ).query;
+    return '/favorites/groups?$query';
+  }
+
   bool isRefreshingPlaylist(int id) => _refreshingPlaylistIds.contains(id);
 
   int _compareGroups(Group a, Group b) {
@@ -349,18 +356,29 @@ class PlaylistStore extends ChangeNotifier {
     await refreshPlaylist(id);
   }
 
-  Future<void> refreshPlaylist(int id) async {
+  Future<int?> refreshPlaylist(int id) async {
     if (_refreshingPlaylistIds.contains(id)) {
-      return;
+      return null;
     }
 
     _refreshingPlaylistIds.add(id);
     notifyListeners();
     try {
-      await api.post('/playlists/$id/refresh');
+      final response = await api.post('/playlists/$id/refresh');
+      int? refreshedCount;
+      if (response is Map<String, dynamic>) {
+        final count = response['count'];
+        if (count is int) {
+          refreshedCount = count;
+        } else if (count is num) {
+          refreshedCount = count.toInt();
+        }
+      }
+
       await selectPlaylist(id);
       _globalGroups = const [];
       _globalChannels = const [];
+      return refreshedCount;
     } finally {
       _refreshingPlaylistIds.remove(id);
       notifyListeners();
@@ -412,6 +430,7 @@ class PlaylistStore extends ChangeNotifier {
 
   Future<void> toggleFavoriteGroup(Group group) async {
     final groupName = group.name.trim();
+    final normalizedGroupName = groupName.toLowerCase();
     final initialPlaylistId = group.playlistId > 0
         ? group.playlistId
         : selectedPlaylistId;
@@ -421,11 +440,34 @@ class PlaylistStore extends ChangeNotifier {
     var playlistId = initialPlaylistId;
 
     final currentlyFavorite = isGroupFavorite(playlistId, groupName);
+    final affectedPlaylistIds = <int>{playlistId};
 
     if (currentlyFavorite) {
-      await api.delete(
-        '/favorites/groups/$playlistId/${Uri.encodeComponent(groupName)}',
-      );
+      final candidatePlaylistIds = favoriteGroups
+          .where((g) => g.name.trim().toLowerCase() == normalizedGroupName)
+          .map((g) => g.playlistId)
+          .toSet();
+      if (candidatePlaylistIds.isEmpty) {
+        candidatePlaylistIds.add(playlistId);
+      }
+      affectedPlaylistIds
+        ..clear()
+        ..addAll(candidatePlaylistIds);
+
+      ApiException? lastError;
+      var removedAny = false;
+      for (final candidateId in candidatePlaylistIds) {
+        try {
+          await api.delete(_favoriteGroupDeletePath(candidateId, groupName));
+          removedAny = true;
+        } on ApiException catch (e) {
+          lastError = e;
+        }
+      }
+
+      if (!removedAny && lastError != null) {
+        throw lastError;
+      }
     } else {
       final candidatePlaylistIds = <int>{
         playlistId,
@@ -458,6 +500,9 @@ class PlaylistStore extends ChangeNotifier {
             'group_name': groupName,
           });
           playlistId = candidateId;
+          affectedPlaylistIds
+            ..clear()
+            ..add(candidateId);
           added = true;
           break;
         } on ApiException catch (e) {
@@ -474,7 +519,9 @@ class PlaylistStore extends ChangeNotifier {
 
     groups = _sortedGroups(
       groups.map(
-        (g) => g.playlistId == playlistId && g.name == groupName
+        (g) =>
+            affectedPlaylistIds.contains(g.playlistId) &&
+                g.name.trim().toLowerCase() == normalizedGroupName
             ? g.copyWith(isFavorite: nextIsFavorite)
             : g,
       ),
@@ -482,7 +529,9 @@ class PlaylistStore extends ChangeNotifier {
 
     _globalGroups = _sortedGroups(
       _globalGroups.map(
-        (g) => g.playlistId == playlistId && g.name == groupName
+        (g) =>
+            affectedPlaylistIds.contains(g.playlistId) &&
+                g.name.trim().toLowerCase() == normalizedGroupName
             ? g.copyWith(isFavorite: nextIsFavorite)
             : g,
       ),
@@ -490,7 +539,9 @@ class PlaylistStore extends ChangeNotifier {
 
     if (nextIsFavorite) {
       if (!favoriteGroups.any(
-        (g) => g.playlistId == playlistId && g.name == groupName,
+        (g) =>
+            g.playlistId == playlistId &&
+            g.name.trim().toLowerCase() == normalizedGroupName,
       )) {
         favoriteGroups = _sortedGroups([
           Group(
@@ -505,7 +556,9 @@ class PlaylistStore extends ChangeNotifier {
     } else {
       favoriteGroups = _sortedGroups(
         favoriteGroups.where(
-          (g) => !(g.playlistId == playlistId && g.name == groupName),
+          (g) =>
+              !(affectedPlaylistIds.contains(g.playlistId) &&
+                  g.name.trim().toLowerCase() == normalizedGroupName),
         ),
       );
     }
@@ -594,7 +647,7 @@ class PlaylistStore extends ChangeNotifier {
     if (group.playlistId > 0) {
       try {
         await api.delete(
-          '/favorites/groups/${group.playlistId}/${Uri.encodeComponent(group.name)}',
+          _favoriteGroupDeletePath(group.playlistId, group.name),
         );
       } catch (_) {
         // Best effort cleanup for stale mapping.

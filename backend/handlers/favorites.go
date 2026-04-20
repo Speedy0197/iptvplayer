@@ -173,12 +173,24 @@ func AddFavoriteGroup(w http.ResponseWriter, r *http.Request) {
 
 func RemoveFavoriteGroup(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
-	playlistID, err := strconv.ParseInt(chi.URLParam(r, "playlist_id"), 10, 64)
+	playlistIDRaw := chi.URLParam(r, "playlist_id")
+	if playlistIDRaw == "" {
+		playlistIDRaw = r.URL.Query().Get("playlist_id")
+	}
+	playlistID, err := strconv.ParseInt(playlistIDRaw, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid playlist_id")
 		return
 	}
 	groupName := chi.URLParam(r, "group_name")
+	if groupName == "" {
+		groupName = r.URL.Query().Get("group_name")
+	}
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		writeError(w, http.StatusBadRequest, "group_name required")
+		return
+	}
 
 	if _, err := database.DB.Exec(
 		`DELETE FROM favorite_groups

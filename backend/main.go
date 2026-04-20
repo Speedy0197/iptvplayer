@@ -65,6 +65,7 @@ func main() {
 
 			r.Get("/favorites/groups", handlers.ListFavoriteGroups)
 			r.Post("/favorites/groups", handlers.AddFavoriteGroup)
+			r.Delete("/favorites/groups", handlers.RemoveFavoriteGroup)
 			r.Delete("/favorites/groups/{playlist_id}/{group_name}", handlers.RemoveFavoriteGroup)
 		})
 	})

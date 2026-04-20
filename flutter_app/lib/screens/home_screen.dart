@@ -262,12 +262,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     try {
-      await store.refreshPlaylist(playlist.id);
+      final pulledCount = await store.refreshPlaylist(playlist.id);
       if (!mounted) return;
       progressBar.close();
-      messenger.showSnackBar(
-        SnackBar(content: Text('Playlist "${playlist.name}" updated.')),
-      );
+
+      final message = pulledCount == null
+          ? 'Playlist "${playlist.name}" updated.'
+          : 'Playlist "${playlist.name}" updated: $pulledCount channels pulled.';
+      messenger.showSnackBar(SnackBar(content: Text(message)));
     } on ApiException catch (e) {
       if (!mounted) return;
       progressBar.close();
@@ -460,6 +462,7 @@ class _HomeScreenState extends State<HomeScreen> {
     var selectedType = editing?.type ?? 'm3u';
     String? error;
     var submitting = false;
+    String? successMessage;
 
     await showDialog<void>(
       context: context,
@@ -610,22 +613,16 @@ class _HomeScreenState extends State<HomeScreen> {
                             }
 
                             if (!ctx.mounted) return;
+                            successMessage = editing == null
+                                ? 'Playlist created'
+                                : 'Playlist updated';
                             Navigator.of(ctx).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  editing == null
-                                      ? 'Playlist created'
-                                      : 'Playlist updated',
-                                ),
-                              ),
-                            );
                           } on ApiException catch (e) {
                             setState(() => error = e.message);
                           } catch (_) {
                             setState(() => error = 'Could not save playlist');
                           } finally {
-                            if (ctx.mounted) {
+                            if (ctx.mounted && successMessage == null) {
                               setState(() => submitting = false);
                             }
                           }
@@ -656,13 +653,21 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
 
-    nameCtrl.dispose();
-    m3uUrlCtrl.dispose();
-    xtreamServerCtrl.dispose();
-    xtreamUserCtrl.dispose();
-    xtreamPassCtrl.dispose();
-    vuplusIpCtrl.dispose();
-    vuplusPortCtrl.dispose();
+    if (successMessage != null && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(successMessage!)));
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameCtrl.dispose();
+      m3uUrlCtrl.dispose();
+      xtreamServerCtrl.dispose();
+      xtreamUserCtrl.dispose();
+      xtreamPassCtrl.dispose();
+      vuplusIpCtrl.dispose();
+      vuplusPortCtrl.dispose();
+    });
   }
 
   Future<void> _confirmDeletePlaylist(BuildContext context, Playlist p) async {
@@ -1909,7 +1914,16 @@ class _FavoritesView extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       trailing: IconButton(
-                        onPressed: () => store.toggleFavoriteGroup(g),
+                        onPressed: () async {
+                          try {
+                            await store.toggleFavoriteGroup(g);
+                          } on ApiException catch (e) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text(e.message)));
+                          }
+                        },
                         icon: const Icon(Icons.star, color: Colors.amber),
                       ),
                       onTap: () async {
@@ -2062,7 +2076,16 @@ class _FavoriteGroupsList extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         trailing: IconButton(
-                          onPressed: () => store.toggleFavoriteGroup(g),
+                          onPressed: () async {
+                            try {
+                              await store.toggleFavoriteGroup(g);
+                            } on ApiException catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(e.message)),
+                              );
+                            }
+                          },
                           icon: const Icon(Icons.star, color: Colors.amber),
                         ),
                         onTap: () async {
