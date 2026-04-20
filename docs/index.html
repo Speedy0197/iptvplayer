@@ -96,7 +96,7 @@
     .cards {
       margin-top: 28px;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 16px;
     }
 
@@ -115,6 +115,7 @@
     .card:nth-child(2) { animation-delay: 80ms; }
     .card:nth-child(3) { animation-delay: 150ms; }
     .card:nth-child(4) { animation-delay: 220ms; }
+    .card:nth-child(5) { animation-delay: 290ms; }
 
     .card h2 {
       margin: 0;
@@ -243,6 +244,9 @@
     }
 
     @media (max-width: 850px) {
+      .cards { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 560px) {
       .cards { grid-template-columns: 1fr; }
     }
   </style>
@@ -262,10 +266,36 @@
             <span class="platform-icon">
               <i class="fab fa-android"></i>
             </span>
+            Android
+          </span>
+          <h2>Phone &amp; Tablet</h2>
+          <p>Universal APK for Android phones and tablets.</p>
+          <div class="actions">
+            <a id="link-android" class="btn btn-primary" href="#">Download APK</a>
+          </div>
+          <details>
+            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                <li>Tap "Download APK" above</li>
+                <li>Open the downloaded file from your notifications or Downloads folder</li>
+                <li>Tap "Install" — allow installs from unknown sources if prompted</li>
+                <li>Launch StreamPilot from your home screen</li>
+              </ol>
+              <p style="margin-top: 12px; margin-bottom: 0; font-size: 0.9rem; color: var(--muted);"><strong>Note:</strong> Enable "Install unknown apps" in Settings → Apps → Special app access if prompted.</p>
+            </div>
+          </details>
+        </article>
+
+        <article class="card">
+          <span class="platform">
+            <span class="platform-icon">
+              <i class="fab fa-android"></i>
+            </span>
             Android TV
           </span>
           <h2>Smart TV</h2>
-          <p>Universal APK that works on all Android TV devices.</p>
+          <p>Universal APK for Android TV and Google TV devices.</p>
           <div class="actions">
             <a id="link-android-tv" class="btn btn-primary" href="#">Download APK</a>
           </div>
@@ -387,7 +417,7 @@
 
       var latestBase = "https://github.com/" + owner + "/" + repo + "/releases/latest/download/";
       var latestReleaseApi = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
-      var testFlightUrl = "https://testflight.apple.com/join/YOUR_PUBLIC_INVITE_CODE";
+      var testFlightUrl = "https://testflight.apple.com/join/fJb6nsgN";
 
       var assets = {
         androidTv: "streampilot-android.apk",
@@ -395,6 +425,7 @@
         windows: "iptv-player-windows.exe"
       };
 
+      document.getElementById("link-android").href = latestBase + assets.androidTv;
       document.getElementById("link-android-tv").href = latestBase + assets.androidTv;
       document.getElementById("link-macos").href = latestBase + assets.macos;
       document.getElementById("link-windows").href = latestBase + assets.windows;

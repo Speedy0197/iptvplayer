@@ -27,6 +27,9 @@ Optional TestFlight upload (automatic if configured):
   - APPSTORE_API_KEY_ID
   - APPSTORE_API_ISSUER_ID
   - APPSTORE_API_PRIVATE_KEY or APPSTORE_API_PRIVATE_KEY_PATH
+
+Install create-dmg for the macOS DMG:
+  brew install create-dmg
 EOF
 }
 
@@ -106,7 +109,7 @@ fi
 require_cmd flutter
 require_cmd git
 require_cmd gh
-require_cmd hdiutil
+require_cmd create-dmg
 require_cmd ditto
 require_cmd find
 
@@ -156,8 +159,16 @@ fi
 
 echo "Creating DMG..."
 cp -R "$APP_BUNDLE" "$MACOS_STAGE_DIR/StreamPilot.app"
-ln -sf /Applications "$MACOS_STAGE_DIR/Applications"
-hdiutil create -volname "StreamPilot" -srcfolder "$MACOS_STAGE_DIR" -ov -format UDZO "$DIST_DIR/streampilot-macos.dmg" >/dev/null
+create-dmg \
+  --volname "StreamPilot" \
+  --window-pos 200 120 \
+  --window-size 600 400 \
+  --icon-size 100 \
+  --icon "StreamPilot.app" 150 185 \
+  --hide-extension "StreamPilot.app" \
+  --app-drop-link 450 185 \
+  "$DIST_DIR/streampilot-macos.dmg" \
+  "$MACOS_STAGE_DIR/"
 
 echo "Building iOS IPA..."
 flutter build ipa --release --build-name="$VERSION" --build-number="$BUILD_NUMBER"
