@@ -110,6 +110,7 @@ class Channel {
   final String streamUrl;
   final String logoUrl;
   final String epgChannelId;
+  final int? sortOrder;
   final bool isFavorite;
 
   const Channel({
@@ -121,6 +122,7 @@ class Channel {
     required this.streamUrl,
     required this.logoUrl,
     required this.epgChannelId,
+    this.sortOrder,
     required this.isFavorite,
   });
 
@@ -134,6 +136,7 @@ class Channel {
       streamUrl: (json['stream_url'] as String?) ?? '',
       logoUrl: (json['logo_url'] as String?) ?? '',
       epgChannelId: (json['epg_channel_id'] as String?) ?? '',
+      sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
       isFavorite: _jsonBool(json['is_favorite']),
     );
   }
@@ -148,6 +151,7 @@ class Channel {
       streamUrl: streamUrl,
       logoUrl: logoUrl,
       epgChannelId: epgChannelId,
+      sortOrder: sortOrder,
       isFavorite: isFavorite ?? this.isFavorite,
     );
   }

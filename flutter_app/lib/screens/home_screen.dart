@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -1898,7 +1897,21 @@ class _ChannelsPane extends StatelessWidget {
               ? MainAxisSize.min
               : MainAxisSize.max,
           children: [
-            const ListTile(title: Text('Channels'), dense: true),
+            ListTile(
+              title: const Text('Channels'),
+              dense: true,
+              trailing: IconButton(
+                icon: Icon(
+                  store.channelSortOrder == ChannelSortOrder.byName
+                      ? Icons.sort_by_alpha
+                      : Icons.sort,
+                ),
+                tooltip: store.channelSortOrder == ChannelSortOrder.byName
+                    ? 'Sort by name (tap to sort by index)'
+                    : 'Sort by index (tap to sort by name)',
+                onPressed: () => store.toggleChannelSortOrder(),
+              ),
+            ),
             if (!compact || fullscreen)
               Expanded(
                 child: store.loadingChannels

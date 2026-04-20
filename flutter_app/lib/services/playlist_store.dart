@@ -4,6 +4,7 @@ import '../models/models.dart';
 import 'api_client.dart';
 
 enum SearchResultType { channel, group }
+enum ChannelSortOrder { byName, byIndex }
 
 class SearchResultItem {
   final SearchResultType type;
@@ -67,6 +68,7 @@ class PlaylistStore extends ChangeNotifier {
   bool _favoriteGroupsLoaded = false;
   bool loadingEpg = false;
   final Set<int> _refreshingPlaylistIds = <int>{};
+  ChannelSortOrder channelSortOrder = ChannelSortOrder.byName;
 
   String _favoriteGroupDeletePath(int playlistId, String groupName) {
     final query = Uri(
@@ -88,7 +90,13 @@ class PlaylistStore extends ChangeNotifier {
     if (a.isFavorite != b.isFavorite) {
       return a.isFavorite ? -1 : 1;
     }
-    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    
+    switch (channelSortOrder) {
+      case ChannelSortOrder.byIndex:
+        return (a.sortOrder ?? 0).compareTo(b.sortOrder ?? 0);
+      case ChannelSortOrder.byName:
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    }
   }
 
   List<Group> _sortedGroups(Iterable<Group> values) {
@@ -566,6 +574,19 @@ class PlaylistStore extends ChangeNotifier {
     // Ensure frontend and backend stay in sync even if local flags were stale.
     await fetchFavoriteGroups();
 
+    notifyListeners();
+  }
+
+  void toggleChannelSortOrder() {
+    channelSortOrder = channelSortOrder == ChannelSortOrder.byName
+        ? ChannelSortOrder.byIndex
+        : ChannelSortOrder.byName;
+    
+    // Re-sort channels with the new sort order
+    channels = _sortedChannels(channels);
+    _globalChannels = _sortedChannels(_globalChannels);
+    favoriteChannels = _sortedChannels(favoriteChannels);
+    
     notifyListeners();
   }
 

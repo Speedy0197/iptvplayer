@@ -105,12 +105,19 @@
       border: 1px solid var(--line);
       border-radius: var(--radius);
       padding: 20px;
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: 14px;
-      align-content: start;
       transform: translateY(8px);
       opacity: 0;
       animation: cardIn 0.5s ease-out forwards;
+    }
+
+    .card-footer {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
     }
 
     .card:nth-child(2) { animation-delay: 80ms; }
@@ -303,7 +310,6 @@
           <details>
             <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
             <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
-              <h4 style="margin-top: 0; margin-bottom: 8px;">Easy Method:</h4>
               <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
                 <li>Download the APK to USB or cloud storage</li>
                 <li>On your TV, open the file manager app</li>
@@ -346,17 +352,6 @@
         </article>
 
         <article class="card">
-          <details>
-            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
-              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
-                <li>Download the DMG file and double-click it</li>
-                <li>Drag StreamPilot into the Applications folder</li>
-                <li>Open Applications, then right-click StreamPilot and choose "Open" the first time</li>
-                <li>If macOS blocks the app, go to System Settings → Privacy &amp; Security and click "Open Anyway"</li>
-              </ol>
-            </div>
-          </details>
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-apple"></i>
@@ -365,23 +360,25 @@
           </span>
           <h2>Desktop App</h2>
           <p>Download and install on your Mac.</p>
-          <div class="actions">
-            <a id="link-macos" class="btn btn-primary" href="#">Download DMG</a>
+          <div class="card-footer">
+            <div class="actions">
+              <a id="link-macos" class="btn btn-primary" href="#">Download DMG</a>
+            </div>
+            <details>
+              <summary style="cursor: pointer; color: var(--brand); font-weight: 600;">📖 Installation Instructions</summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+                <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                  <li>Download the DMG file and double-click it</li>
+                  <li>Drag StreamPilot into the Applications folder</li>
+                  <li>Open Applications, then right-click StreamPilot and choose "Open" the first time</li>
+                  <li>If macOS blocks the app, go to System Settings → Privacy &amp; Security and click "Open Anyway"</li>
+                </ol>
+              </div>
+            </details>
           </div>
         </article>
 
         <article class="card">
-          <details>
-            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
-              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
-                <li>Download the EXE installer</li>
-                <li>Double-click the installer to start setup</li>
-                <li>If Windows SmartScreen appears, click "More info" then "Run anyway"</li>
-                <li>Finish the setup wizard, then launch StreamPilot from Start menu or desktop shortcut</li>
-              </ol>
-            </div>
-          </details>
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-windows"></i>
@@ -390,8 +387,21 @@
           </span>
           <h2>Desktop App</h2>
           <p>Download and install on your Windows PC.</p>
-          <div class="actions">
-            <a id="link-windows" class="btn btn-primary" href="#">Download EXE</a>
+          <div class="card-footer">
+            <div class="actions">
+              <a id="link-windows" class="btn btn-primary" href="#">Download EXE</a>
+            </div>
+            <details>
+              <summary style="cursor: pointer; color: var(--brand); font-weight: 600;">📖 Installation Instructions</summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+                <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                  <li>Download the EXE installer</li>
+                  <li>Double-click the installer to start setup</li>
+                  <li>If Windows SmartScreen appears, click "More info" then "Run anyway"</li>
+                  <li>Finish the setup wizard, then launch StreamPilot from Start menu or desktop shortcut</li>
+                </ol>
+              </div>
+            </details>
           </div>
         </article>
       </section>
