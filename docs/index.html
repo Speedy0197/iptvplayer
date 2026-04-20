@@ -262,13 +262,27 @@
             <span class="platform-icon">
               <i class="fab fa-android"></i>
             </span>
-            Android
+            Android TV
           </span>
-          <h2>Phone / Tablet</h2>
-          <p>Download and install on your Android device.</p>
+          <h2>Smart TV</h2>
+          <p>Universal APK that works on all Android TV devices.</p>
           <div class="actions">
-            <a id="link-android" class="btn btn-primary" href="#">Download APK</a>
+            <a id="link-android-tv" class="btn btn-primary" href="#">Download APK</a>
           </div>
+          <details>
+            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+              <h4 style="margin-top: 0; margin-bottom: 8px;">Easy Method:</h4>
+              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                <li>Download the APK to USB or cloud storage</li>
+                <li>On your TV, open the file manager app</li>
+                <li>Navigate to the APK file and tap it</li>
+                <li>Confirm installation</li>
+                <li>Find StreamPilot in your TV's apps menu</li>
+              </ol>
+              <p style="margin-top: 12px; margin-bottom: 0; font-size: 0.9rem; color: var(--muted);"><strong>Note:</strong> Enable "Unknown sources" in TV Settings → Security if prompted.</p>
+            </div>
+          </details>
         </article>
 
         <article class="card">
@@ -287,9 +301,31 @@
             <img id="ios-testflight-qr" alt="QR code to open TestFlight invite" />
             <p id="ios-testflight-caption" class="qr-caption">Scan to open your TestFlight invite.</p>
           </div>
+          <details>
+            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                <li>Tap "Open TestFlight" button above</li>
+                <li>Accept the invite in TestFlight app</li>
+                <li>Tap "Install" and wait for the app to download</li>
+                <li>Launch StreamPilot from your home screen</li>
+              </ol>
+            </div>
+          </details>
         </article>
 
         <article class="card">
+          <details>
+            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                <li>Download the DMG file</li>
+                <li>Double-click to open the DMG</li>
+                <li>Drag StreamPilot to the Applications folder</li>
+                <li>Open Applications folder and launch StreamPilot</li>
+              </ol>
+            </div>
+          </details>
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-apple"></i>
@@ -304,6 +340,17 @@
         </article>
 
         <article class="card">
+          <details>
+            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                <li>Download the EXE installer</li>
+                <li>Double-click the installer</li>
+                <li>Follow the installation wizard</li>
+                <li>Launch StreamPilot from Start menu or desktop</li>
+              </ol>
+            </div>
+          </details>
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-windows"></i>
@@ -320,11 +367,11 @@
 
       <div class="note">
         Build files are expected in the latest GitHub Release with these names:
-        <code>iptv-player-android.apk</code>, <code>iptv-player-macos.dmg</code>, <code>iptv-player-windows.exe</code>.
+        <code>streampilot-android.apk</code> (Android TV), <code>streampilot-macos.dmg</code>, <code>streampilot-ios.ipa</code> (TestFlight).
       </div>
 
       <p class="footer">
-        Set your public TestFlight invite link in <code>docs/index.html</code> via <code>testFlightUrl</code>.
+        All builds are created by running <code>./scripts/release.sh</code>. Set your TestFlight invite link in <code>docs/index.html</code> via <code>testFlightUrl</code>.
       </p>
     </section>
   </main>
@@ -343,12 +390,12 @@
       var testFlightUrl = "https://testflight.apple.com/join/YOUR_PUBLIC_INVITE_CODE";
 
       var assets = {
-        android: "iptv-player-android.apk",
-        macos: "iptv-player-macos.dmg",
+        androidTv: "streampilot-android.apk",
+        macos: "streampilot-macos.dmg",
         windows: "iptv-player-windows.exe"
       };
 
-      document.getElementById("link-android").href = latestBase + assets.android;
+      document.getElementById("link-android-tv").href = latestBase + assets.androidTv;
       document.getElementById("link-macos").href = latestBase + assets.macos;
       document.getElementById("link-windows").href = latestBase + assets.windows;
 
