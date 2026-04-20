@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 env:
-  FLUTTER_VERSION: "3.11.5"
+  # This must be a Flutter SDK release, not the bundled Dart SDK version.
+  FLUTTER_VERSION: "3.41.7"
 
 jobs:
   build-android-tv:
@@ -25,6 +26,7 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
+          channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
@@ -53,6 +55,7 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
+          channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
