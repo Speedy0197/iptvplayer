@@ -2,6 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Flutter: Selected Device (Debug + Hot Reload)",
+      "request": "launch",
+      "type": "dart",
+      "cwd": "${workspaceFolder}/flutter_app",
+      "program": "${workspaceFolder}/flutter_app/lib/main.dart",
+      "flutterMode": "debug"
+    },
+    {
       "name": "Flutter: iPhone von Florian (wireless)",
       "request": "launch",
       "type": "dart",
