@@ -1,0 +1,18 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="EasyIPTV logo option A">
+  <defs>
+    <linearGradient id="bgA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0D1B2A" />
+      <stop offset="100%" stop-color="#1B263B" />
+    </linearGradient>
+    <linearGradient id="accentA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00D4FF" />
+      <stop offset="100%" stop-color="#00FFA3" />
+    </linearGradient>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="210" fill="url(#bgA)"/>
+  <rect x="240" y="252" width="120" height="520" rx="56" fill="url(#accentA)"/>
+  <rect x="398" y="252" width="340" height="120" rx="56" fill="url(#accentA)"/>
+  <rect x="398" y="452" width="250" height="120" rx="56" fill="url(#accentA)"/>
+  <polygon points="600,652 790,760 600,868" fill="url(#accentA)"/>
+</svg>

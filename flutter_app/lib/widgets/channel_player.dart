@@ -34,7 +34,7 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
     super.initState();
     _player = Player(
       configuration: const PlayerConfiguration(
-        title: 'IPTV Player',
+        title: 'StreamPilot',
         logLevel: MPVLogLevel.warn,
         bufferSize: 64 * 1024 * 1024,
       ),

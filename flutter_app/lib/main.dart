@@ -32,7 +32,7 @@ class IptvFlutterApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
-        title: 'IPTV Player',
+        title: 'StreamPilot',
         theme: ThemeData(
           brightness: Brightness.dark,
           colorScheme: ColorScheme.fromSeed(

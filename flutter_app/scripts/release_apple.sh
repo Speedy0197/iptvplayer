@@ -22,6 +22,11 @@ Requirements:
   - Run on macOS with Xcode and Flutter installed
   - iOS signing must already be configured in Xcode
   - gh CLI must be installed and authenticated
+
+Optional TestFlight upload (automatic if configured):
+  - APPSTORE_API_KEY_ID
+  - APPSTORE_API_ISSUER_ID
+  - APPSTORE_API_PRIVATE_KEY or APPSTORE_API_PRIVATE_KEY_PATH
 EOF
 }
 
@@ -30,6 +35,43 @@ require_cmd() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+upload_to_testflight_if_configured() {
+  if [[ -z "${APPSTORE_API_KEY_ID:-}" || -z "${APPSTORE_API_ISSUER_ID:-}" ]]; then
+    echo "Skipping TestFlight upload (APPSTORE_API_KEY_ID / APPSTORE_API_ISSUER_ID not set)."
+    return 0
+  fi
+
+  if [[ -z "${APPSTORE_API_PRIVATE_KEY:-}" && -z "${APPSTORE_API_PRIVATE_KEY_PATH:-}" ]]; then
+    echo "Skipping TestFlight upload (set APPSTORE_API_PRIVATE_KEY or APPSTORE_API_PRIVATE_KEY_PATH)."
+    return 0
+  fi
+
+  require_cmd xcrun
+
+  local key_dir
+  local key_file
+
+  key_dir="$(mktemp -d)"
+  key_file="$key_dir/AuthKey_${APPSTORE_API_KEY_ID}.p8"
+
+  if [[ -n "${APPSTORE_API_PRIVATE_KEY_PATH:-}" ]]; then
+    if [[ ! -f "$APPSTORE_API_PRIVATE_KEY_PATH" ]]; then
+      echo "APPSTORE_API_PRIVATE_KEY_PATH does not exist: $APPSTORE_API_PRIVATE_KEY_PATH" >&2
+      rm -rf "$key_dir"
+      exit 1
+    fi
+    cp "$APPSTORE_API_PRIVATE_KEY_PATH" "$key_file"
+  else
+    printf '%s\n' "$APPSTORE_API_PRIVATE_KEY" > "$key_file"
+  fi
+
+  echo "Uploading IPA to TestFlight..."
+  API_PRIVATE_KEYS_DIR="$key_dir" xcrun altool --upload-app --type ios --file "$DIST_DIR/iptv-player-ios.ipa" --apiKey "$APPSTORE_API_KEY_ID" --apiIssuer "$APPSTORE_API_ISSUER_ID"
+
+  rm -rf "$key_dir"
+  echo "TestFlight upload submitted. Processing continues in App Store Connect."
 }
 
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
@@ -106,15 +148,16 @@ flutter pub get
 echo "Building macOS app..."
 flutter build macos --release --build-name="$VERSION" --build-number="$BUILD_NUMBER"
 
-APP_BUNDLE="$APP_DIR/build/macos/Build/Products/Release/flutter_app.app"
+APP_BUNDLE="$APP_DIR/build/macos/Build/Products/Release/StreamPilot.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then
   echo "macOS app bundle not found at $APP_BUNDLE" >&2
   exit 1
 fi
 
 echo "Creating DMG..."
-cp -R "$APP_BUNDLE" "$MACOS_STAGE_DIR/IPTV Player.app"
-hdiutil create -volname "IPTV Player" -srcfolder "$MACOS_STAGE_DIR" -ov -format UDZO "$DIST_DIR/iptv-player-macos.dmg" >/dev/null
+cp -R "$APP_BUNDLE" "$MACOS_STAGE_DIR/StreamPilot.app"
+ln -sf /Applications "$MACOS_STAGE_DIR/Applications"
+hdiutil create -volname "StreamPilot" -srcfolder "$MACOS_STAGE_DIR" -ov -format UDZO "$DIST_DIR/iptv-player-macos.dmg" >/dev/null
 
 echo "Building iOS IPA..."
 flutter build ipa --release --build-name="$VERSION" --build-number="$BUILD_NUMBER"
@@ -127,6 +170,8 @@ fi
 
 cp "$IPA_SOURCE" "$DIST_DIR/iptv-player-ios.ipa"
 
+upload_to_testflight_if_configured
+
 cd "$REPO_DIR"
 
 echo "Creating and pushing tag $TAG..."
@@ -134,7 +179,7 @@ git tag -a "$TAG" -m "Release $TAG"
 git push origin "$TAG"
 
 echo "Creating GitHub release if needed..."
-gh release create "$TAG" --title "IPTV Player $TAG" --notes ""
+gh release create "$TAG" --title "StreamPilot $TAG" --notes ""
 
 echo "Uploading Apple assets..."
 gh release upload "$TAG" \

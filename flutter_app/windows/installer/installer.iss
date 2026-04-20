@@ -1,9 +1,9 @@
 [Setup]
-AppName=IPTV Player
+AppName=StreamPilot
 AppVersion={#AppVersion}
-AppPublisher=IPTV Player
-DefaultDirName={autopf}\IPTV Player
-DefaultGroupName=IPTV Player
+AppPublisher=StreamPilot
+DefaultDirName={autopf}\StreamPilot
+DefaultGroupName=StreamPilot
 OutputDir=..\..\installer_output
 OutputBaseFilename=iptv-player-windows
 Compression=lzma2
@@ -23,9 +23,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\IPTV Player"; Filename: "{app}\flutter_app.exe"
-Name: "{group}\{cm:UninstallProgram,IPTV Player}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\IPTV Player"; Filename: "{app}\flutter_app.exe"; Tasks: desktopicon
+Name: "{group}\StreamPilot"; Filename: "{app}\StreamPilot.exe"
+Name: "{group}\{cm:UninstallProgram,StreamPilot}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\StreamPilot"; Filename: "{app}\StreamPilot.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\flutter_app.exe"; Description: "{cm:LaunchProgram,IPTV Player}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\StreamPilot.exe"; Description: "{cm:LaunchProgram,StreamPilot}"; Flags: nowait postinstall skipifsilent

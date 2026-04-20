@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IPTV Player Downloads</title>
-  <meta name="description" content="Install guides and download links for IPTV Player on Android, iOS, macOS, and Windows." />
+  <title>StreamPilot Downloads</title>
+  <meta name="description" content="Install guides and download links for StreamPilot on Android, iOS, macOS, and Windows." />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
     :root {
@@ -181,6 +181,32 @@
       border: 1px solid #e4d5bc;
     }
 
+    .btn-disabled {
+      pointer-events: none;
+      opacity: 0.65;
+    }
+
+    .qr-wrap {
+      display: grid;
+      gap: 8px;
+      justify-items: start;
+    }
+
+    .qr-wrap img {
+      width: 132px;
+      height: 132px;
+      border-radius: 12px;
+      border: 1px solid #e4d5bc;
+      background: #fff;
+      padding: 8px;
+    }
+
+    .qr-caption {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
     .note {
       margin-top: 26px;
       background: #fef7ee;
@@ -224,9 +250,9 @@
 <body>
   <main class="wrap">
     <section class="hero">
-      <h1>IPTV Player Downloads</h1>
+      <h1>StreamPilot Downloads</h1>
       <p class="subtitle">
-        One page for setup + downloads across all supported platforms. Pick your device, download the latest build, and follow the install notes.
+        One page for setup + downloads across all supported platforms. Pick your device, download the latest StreamPilot build, and follow the install notes.
       </p>
       <p class="version-pill">Latest version: <span id="latest-version">Loading...</span></p>
 
@@ -253,10 +279,13 @@
             iOS
           </span>
           <h2>iPhone / iPad</h2>
-          <p>Download and install on your iOS device.</p>
+          <p>Install via TestFlight. Scan the QR code with your iPhone camera.</p>
           <div class="actions">
-            <a id="link-ios" class="btn btn-primary" href="#">Download IPA</a>
-            <a class="btn btn-secondary" href="https://developer.apple.com/testflight/" target="_blank" rel="noopener">TestFlight</a>
+            <a id="link-ios-testflight" class="btn btn-primary" href="#" target="_blank" rel="noopener">Open TestFlight</a>
+          </div>
+          <div class="qr-wrap">
+            <img id="ios-testflight-qr" alt="QR code to open TestFlight invite" />
+            <p id="ios-testflight-caption" class="qr-caption">Scan to open your TestFlight invite.</p>
           </div>
         </article>
 
@@ -291,11 +320,11 @@
 
       <div class="note">
         Build files are expected in the latest GitHub Release with these names:
-        <code>iptv-player-android.apk</code>, <code>iptv-player-ios.ipa</code>, <code>iptv-player-macos.dmg</code>, <code>iptv-player-windows.exe</code>.
+        <code>iptv-player-android.apk</code>, <code>iptv-player-macos.dmg</code>, <code>iptv-player-windows.exe</code>.
       </div>
 
       <p class="footer">
-        If your release assets use different file names, edit them in <code>docs/index.html</code>.
+        Set your public TestFlight invite link in <code>docs/index.html</code> via <code>testFlightUrl</code>.
       </p>
     </section>
   </main>
@@ -311,18 +340,32 @@
 
       var latestBase = "https://github.com/" + owner + "/" + repo + "/releases/latest/download/";
       var latestReleaseApi = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
+      var testFlightUrl = "https://testflight.apple.com/join/YOUR_PUBLIC_INVITE_CODE";
 
       var assets = {
         android: "iptv-player-android.apk",
-        ios: "iptv-player-ios.ipa",
         macos: "iptv-player-macos.dmg",
         windows: "iptv-player-windows.exe"
       };
 
       document.getElementById("link-android").href = latestBase + assets.android;
-      document.getElementById("link-ios").href = latestBase + assets.ios;
       document.getElementById("link-macos").href = latestBase + assets.macos;
       document.getElementById("link-windows").href = latestBase + assets.windows;
+
+      var iosButton = document.getElementById("link-ios-testflight");
+      var iosQr = document.getElementById("ios-testflight-qr");
+      var iosCaption = document.getElementById("ios-testflight-caption");
+      var hasPublicInvite = testFlightUrl.indexOf("YOUR_PUBLIC_INVITE_CODE") === -1;
+
+      if (hasPublicInvite) {
+        iosButton.href = testFlightUrl;
+        iosQr.src = "https://api.qrserver.com/v1/create-qr-code/?size=264x264&data=" + encodeURIComponent(testFlightUrl);
+      } else {
+        iosButton.textContent = "Set TestFlight Link";
+        iosButton.classList.add("btn-disabled");
+        iosQr.style.display = "none";
+        iosCaption.textContent = "Add your public TestFlight invite link to enable QR install.";
+      }
 
       fetch(latestReleaseApi)
         .then(function (response) {
