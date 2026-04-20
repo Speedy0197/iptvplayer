@@ -4,7 +4,7 @@ AppVersion={#AppVersion}
 AppPublisher=IPTV Player
 DefaultDirName={autopf}\IPTV Player
 DefaultGroupName=IPTV Player
-OutputDir=..\..\..\installer_output
+OutputDir=..\..\installer_output
 OutputBaseFilename=iptv-player-windows
 Compression=lzma2
 SolidCompression=yes
@@ -20,7 +20,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "..\..\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\IPTV Player"; Filename: "{app}\flutter_app.exe"
