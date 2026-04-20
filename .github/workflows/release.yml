@@ -13,8 +13,8 @@ env:
   FLUTTER_VERSION: "3.41.7"
 
 jobs:
-  build-android-tv:
-    name: Build Android TV APK
+  build-android:
+    name: Build Android APK (Universal)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
         working-directory: flutter_app
         run: flutter pub get
 
-      - name: Build Android TV APK (Universal)
+      - name: Build Android APK (Universal)
         working-directory: flutter_app
         run: |
           flutter build apk --release \
