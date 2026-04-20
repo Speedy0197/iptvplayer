@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
@@ -57,11 +60,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openCompactPlayer(PlaylistStore store) async {
     if (!mounted) return;
 
-    final isIosCompact =
-        !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.iOS &&
+    final isSmallCompact =
         MediaQuery.sizeOf(context).width < _compactBreakpoint;
-    final favoritesPlayerPage = isIosCompact ? 2 : 1;
+    final favoritesPlayerPage = isSmallCompact ? 2 : 1;
 
     if (_section == _HomeSection.favorites) {
       setState(() => _compactFavoritesView = favoritesPlayerPage);
@@ -173,11 +174,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() => _section = _HomeSection.watch);
         if (item.type == SearchResultType.group) {
-          final isIosCompact =
-              !kIsWeb &&
-              defaultTargetPlatform == TargetPlatform.iOS &&
+          final isSmallCompact =
               MediaQuery.sizeOf(context).width < _compactBreakpoint;
-          if (isIosCompact) {
+          if (isSmallCompact) {
             await _goToCompactWatchPage(_watchViewChannels);
           }
         }
@@ -191,9 +190,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     final store = context.read<PlaylistStore>();
-    final isIosCompact =
-        !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.iOS &&
+    final isSmallCompact =
         MediaQuery.sizeOf(context).width < _compactBreakpoint;
 
     if (_section != _HomeSection.watch) {
@@ -214,7 +211,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (!mounted) return;
 
-      if (isIosCompact) {
+      if (isSmallCompact) {
         if (_compactWatchView != _watchViewChannels) {
           setState(() => _compactWatchView = _watchViewChannels);
         }
@@ -284,6 +281,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showSearchDialog() async {
+    if (!mounted || _searchDialogOpen || _searchDialogPending) return;
+
+    _searchDialogPending = true;
+    try {
+      await context.read<PlaylistStore>().ensureGlobalSearchData();
+    } finally {
+      _searchDialogPending = false;
+    }
+
     if (!mounted) return;
     _searchDialogOpen = true;
     try {
@@ -318,7 +324,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         onChanged: (value) {
                           _searchCtrl.text = value;
-                          _handleGlobalSearchInput(value);
+                          context.read<PlaylistStore>().setSearchQuery(value);
                         },
                       ),
                       const SizedBox(height: 12),
@@ -459,7 +465,12 @@ class _HomeScreenState extends State<HomeScreen> {
       text: editing?.vuplusPort ?? '80',
     );
 
-    var selectedType = editing?.type ?? 'm3u';
+    var selectedType = editing?.type ?? 'xtream';
+    var m3uSource = editing?.type == 'm3u' && ((editing?.m3uUrl ?? '').isEmpty)
+        ? 'file'
+        : 'url';
+    String? m3uContent;
+    String? m3uFileName;
     String? error;
     var submitting = false;
     String? successMessage;
@@ -474,14 +485,16 @@ class _HomeScreenState extends State<HomeScreen> {
               title: Text(editing == null ? 'Add playlist' : 'Edit playlist'),
               content: SizedBox(
                 width: dialogWidth > 640 ? 520 : dialogWidth - 64,
+                height: 340,
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     SegmentedButton<String>(
+                      showSelectedIcon: false,
                       segments: const [
-                        ButtonSegment(value: 'm3u', label: Text('M3U')),
                         ButtonSegment(value: 'xtream', label: Text('Xtream')),
                         ButtonSegment(value: 'vuplus', label: Text('VU+')),
+                        ButtonSegment(value: 'm3u', label: Text('M3U')),
                       ],
                       selected: {selectedType},
                       onSelectionChanged: editing != null
@@ -499,59 +512,168 @@ class _HomeScreenState extends State<HomeScreen> {
                       decoration: const InputDecoration(labelText: 'Name'),
                     ),
                     const SizedBox(height: 8),
-                    if (selectedType == 'm3u')
-                      TextField(
-                        controller: m3uUrlCtrl,
-                        decoration: const InputDecoration(labelText: 'M3U URL'),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (selectedType == 'm3u')
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                SegmentedButton<String>(
+                                  showSelectedIcon: false,
+                                  segments: const [
+                                    ButtonSegment(
+                                      value: 'url',
+                                      label: Text('URL'),
+                                    ),
+                                    ButtonSegment(
+                                      value: 'file',
+                                      label: Text('File Upload'),
+                                    ),
+                                  ],
+                                  selected: {m3uSource},
+                                  onSelectionChanged: (next) {
+                                    setState(() {
+                                      m3uSource = next.first;
+                                      error = null;
+                                    });
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                if (m3uSource == 'url')
+                                  TextField(
+                                    controller: m3uUrlCtrl,
+                                    decoration: const InputDecoration(
+                                      labelText: 'M3U URL',
+                                    ),
+                                  )
+                                else ...[
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final result = await FilePicker.platform
+                                          .pickFiles(
+                                            type: FileType.custom,
+                                            allowedExtensions: const [
+                                              'm3u',
+                                              'm3u8',
+                                              'txt',
+                                            ],
+                                            withData: true,
+                                          );
+                                      if (result == null ||
+                                          result.files.isEmpty) {
+                                        return;
+                                      }
+
+                                      final pickedFile = result.files.first;
+                                      final bytes = pickedFile.bytes;
+                                      if (bytes == null || bytes.isEmpty) {
+                                        setState(() {
+                                          error =
+                                              'Could not read the selected M3U file';
+                                        });
+                                        return;
+                                      }
+
+                                      setState(() {
+                                        m3uContent = utf8.decode(
+                                          bytes,
+                                          allowMalformed: true,
+                                        );
+                                        m3uFileName = pickedFile.name;
+                                        error = null;
+                                      });
+                                    },
+                                    icon: const Icon(Icons.upload_file),
+                                    label: Text(
+                                      m3uFileName == null
+                                          ? 'Choose M3U File'
+                                          : 'Replace File',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.outlineVariant,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      m3uFileName ??
+                                          'No file selected. Upload an M3U file from this device.',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodyMedium,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            )
+                          else if (selectedType == 'xtream') ...[
+                            TextField(
+                              controller: xtreamServerCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Xtream server URL',
+                                hintText: 'http://provider.example.com:8080',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: xtreamUserCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Xtream username',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: xtreamPassCtrl,
+                              decoration: InputDecoration(
+                                labelText: editing == null
+                                    ? 'Xtream password'
+                                    : 'Xtream password (optional)',
+                              ),
+                              obscureText: true,
+                            ),
+                          ] else ...[
+                            TextField(
+                              controller: vuplusIpCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'VU+ IP / host',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: vuplusPortCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'VU+ port',
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    if (selectedType == 'xtream') ...[
-                      TextField(
-                        controller: xtreamServerCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Xtream server URL',
-                          hintText: 'http://provider.example.com:8080',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: xtreamUserCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Xtream username',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: xtreamPassCtrl,
-                        decoration: InputDecoration(
-                          labelText: editing == null
-                              ? 'Xtream password'
-                              : 'Xtream password (optional)',
-                        ),
-                        obscureText: true,
-                      ),
-                    ],
-                    if (selectedType == 'vuplus') ...[
-                      TextField(
-                        controller: vuplusIpCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'VU+ IP / host',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: vuplusPortCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'VU+ port',
-                        ),
-                      ),
-                    ],
-                    if (error != null) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        error!,
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
-                    ],
+                    ),
+                    SizedBox(
+                      height: 30,
+                      child: error == null
+                          ? null
+                          : Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                error!,
+                                style: const TextStyle(color: Colors.redAccent),
+                              ),
+                            ),
+                    ),
                   ],
                 ),
               ),
@@ -576,11 +698,30 @@ class _HomeScreenState extends State<HomeScreen> {
                               throw const ApiException('Name is required');
                             }
 
+                            if (selectedType == 'm3u') {
+                              if (m3uSource == 'url' &&
+                                  m3uUrlCtrl.text.trim().isEmpty) {
+                                throw const ApiException('M3U URL is required');
+                              }
+                              if (m3uSource == 'file' &&
+                                  (m3uContent == null ||
+                                      m3uContent!.trim().isEmpty)) {
+                                throw const ApiException(
+                                  'Please choose an M3U file',
+                                );
+                              }
+                            }
+
                             if (editing == null) {
                               if (selectedType == 'm3u') {
                                 await store.createM3uPlaylist(
                                   name: name,
-                                  m3uUrl: m3uUrlCtrl.text.trim(),
+                                  m3uUrl: m3uSource == 'url'
+                                      ? m3uUrlCtrl.text.trim()
+                                      : null,
+                                  m3uContent: m3uSource == 'file'
+                                      ? m3uContent
+                                      : null,
                                 );
                               } else if (selectedType == 'xtream') {
                                 await store.createXtreamPlaylist(
@@ -603,7 +744,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                 id: editing.id,
                                 type: selectedType,
                                 name: name,
-                                m3uUrl: m3uUrlCtrl.text.trim(),
+                                m3uUrl:
+                                    selectedType == 'm3u' && m3uSource == 'url'
+                                    ? m3uUrlCtrl.text.trim()
+                                    : null,
+                                m3uContent:
+                                    selectedType == 'm3u' && m3uSource == 'file'
+                                    ? m3uContent
+                                    : null,
                                 xtreamServer: xtreamServerCtrl.text.trim(),
                                 xtreamUsername: xtreamUserCtrl.text.trim(),
                                 xtreamPassword: xtreamPassCtrl.text,
@@ -728,7 +876,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Widget _buildIosCompactTabStrip({
+  Widget _buildCompactTabStrip({
     required int selectedIndex,
     required List<IconData> icons,
     required List<String> labels,
@@ -801,17 +949,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCompactWatchSection(PlaylistStore store) {
-    final isIosCompact =
-        !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.iOS &&
+    final isSmallCompact =
         MediaQuery.sizeOf(context).width < _compactBreakpoint;
 
     return Column(
       children: [
         SizedBox(
-          width: isIosCompact ? double.infinity : null,
-          child: isIosCompact
-              ? _buildIosCompactTabStrip(
+          width: isSmallCompact ? double.infinity : null,
+          child: isSmallCompact
+              ? _buildCompactTabStrip(
                   selectedIndex: _compactWatchView,
                   icons: const [
                     Icons.playlist_play,
@@ -897,17 +1043,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCompactFavoritesSection(PlaylistStore store) {
-    final isIosCompact =
-        !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.iOS &&
+    final isSmallCompact =
         MediaQuery.sizeOf(context).width < _compactBreakpoint;
 
     return Column(
       children: [
         SizedBox(
-          width: isIosCompact ? double.infinity : null,
-          child: isIosCompact
-              ? _buildIosCompactTabStrip(
+          width: isSmallCompact ? double.infinity : null,
+          child: isSmallCompact
+              ? _buildCompactTabStrip(
                   selectedIndex: _compactFavoritesView,
                   icons: const [
                     Icons.folder_open,
@@ -964,7 +1108,7 @@ class _HomeScreenState extends State<HomeScreen> {
               }
             },
             children: [
-              if (isIosCompact) ...[
+              if (isSmallCompact) ...[
                 _FavoriteGroupsList(
                   store: store,
                   onGroupTap: _openFavoriteGroup,
@@ -991,8 +1135,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final store = context.watch<PlaylistStore>();
     final isCompact = MediaQuery.sizeOf(context).width < _compactBreakpoint;
-    final isIosCompact =
-        isCompact && !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    final isSmallCompact = isCompact;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
 
     BottomNavigationBarItem buildBottomNavItem({
@@ -1002,7 +1145,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }) {
       return BottomNavigationBarItem(
         icon: Icon(icon),
-        activeIcon: isIosCompact
+        activeIcon: isSmallCompact
             ? _CompactBottomNavActiveIcon(icon: activeIcon)
             : Icon(activeIcon),
         label: label,
@@ -1018,6 +1161,7 @@ class _HomeScreenState extends State<HomeScreen> {
               searchCtrl: _searchCtrl,
               store: store,
               onChanged: _handleGlobalSearchInput,
+              onTap: _showSearchDialog,
             ),
             const SizedBox(height: 10),
           ],
@@ -1039,7 +1183,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    if (isIosCompact) {
+    if (isSmallCompact) {
       final base = Theme.of(context);
       bodyContent = Theme(
         data: base.copyWith(
@@ -1065,16 +1209,17 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: isCompact
           ? AppBar(
-              title: isIosCompact
+              title: isSmallCompact
                   ? _GlobalSearchBar(
                       searchCtrl: _searchCtrl,
                       store: store,
                       onChanged: _handleGlobalSearchInput,
+                      onTap: _showSearchDialog,
                       inAppBar: true,
                     )
                   : null,
               actions: [
-                if (!isIosCompact)
+                if (!isSmallCompact)
                   IconButton(
                     tooltip: 'Search',
                     onPressed: () {
@@ -1096,7 +1241,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (store.nowPlaying != null)
                   _CompactMiniPlayerBar(
                     channel: store.nowPlaying!,
-                    iosCompact: isIosCompact,
+                    iosCompact: isSmallCompact,
                     onTap: () => _openCompactPlayer(store),
                   ),
                 MediaQuery.removeViewPadding(
@@ -1104,20 +1249,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   removeBottom: true,
                   child: Padding(
                     padding: EdgeInsets.only(
-                      bottom: isIosCompact ? bottomInset * 0.5 : 0,
+                      bottom: isSmallCompact ? bottomInset * 0.5 : 0,
                     ),
                     child: BottomNavigationBar(
                       currentIndex: _HomeSection.values.indexOf(_section),
                       onTap: (index) {
-                        if (isIosCompact && index == 3) {
+                        if (isSmallCompact && index == 3) {
                           context.read<AuthStore>().logout();
                           return;
                         }
                         _handleSectionChange(_HomeSection.values[index]);
                       },
                       type: BottomNavigationBarType.fixed,
-                      showSelectedLabels: !isIosCompact,
-                      showUnselectedLabels: !isIosCompact,
+                      showSelectedLabels: !isSmallCompact,
+                      showUnselectedLabels: !isSmallCompact,
                       items: [
                         buildBottomNavItem(
                           icon: Icons.ondemand_video_outlined,
@@ -1134,7 +1279,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           activeIcon: Icons.playlist_play,
                           label: 'Playlists',
                         ),
-                        if (isIosCompact)
+                        if (isSmallCompact)
                           buildBottomNavItem(
                             icon: Icons.logout,
                             activeIcon: Icons.logout,
@@ -1188,12 +1333,14 @@ class _GlobalSearchBar extends StatelessWidget {
   final TextEditingController searchCtrl;
   final PlaylistStore store;
   final ValueChanged<String> onChanged;
+  final VoidCallback onTap;
   final bool inAppBar;
 
   const _GlobalSearchBar({
     required this.searchCtrl,
     required this.store,
     required this.onChanged,
+    required this.onTap,
     this.inAppBar = false,
   });
 
@@ -1204,19 +1351,11 @@ class _GlobalSearchBar extends StatelessWidget {
       return TextField(
         controller: searchCtrl,
         autofocus: false,
+        readOnly: true,
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
           hintText: 'Search channels, groups',
           prefixIcon: const Icon(Icons.search, size: 20),
-          suffixIcon: store.searchQuery.trim().isEmpty
-              ? null
-              : IconButton(
-                  onPressed: () {
-                    searchCtrl.clear();
-                    onChanged('');
-                  },
-                  icon: const Icon(Icons.close, size: 18),
-                ),
           filled: true,
           fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
           contentPadding: const EdgeInsets.symmetric(
@@ -1237,25 +1376,17 @@ class _GlobalSearchBar extends StatelessWidget {
           ),
           isDense: true,
         ),
-        onChanged: onChanged,
+        onTap: onTap,
       );
     }
     return TextField(
       controller: searchCtrl,
+      readOnly: true,
       decoration: InputDecoration(
         labelText: 'Search channels, groups',
         prefixIcon: const Icon(Icons.search),
-        suffixIcon: store.searchQuery.trim().isEmpty
-            ? null
-            : IconButton(
-                onPressed: () {
-                  searchCtrl.clear();
-                  onChanged('');
-                },
-                icon: const Icon(Icons.close),
-              ),
       ),
-      onChanged: onChanged,
+      onTap: onTap,
     );
   }
 }

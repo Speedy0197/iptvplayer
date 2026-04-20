@@ -685,15 +685,18 @@ class PlaylistStore extends ChangeNotifier {
 
   Future<void> createM3uPlaylist({
     required String name,
-    required String m3uUrl,
+    String? m3uUrl,
+    String? m3uContent,
   }) async {
-    final result =
-        await api.post('/playlists', {
-              'name': name,
-              'type': 'm3u',
-              'm3u_url': m3uUrl,
-            })
-            as Map<String, dynamic>;
+    final body = <String, dynamic>{
+      'name': name,
+      'type': 'm3u',
+      if (m3uUrl != null && m3uUrl.isNotEmpty) 'm3u_url': m3uUrl,
+      if (m3uContent != null && m3uContent.isNotEmpty)
+        'm3u_content': m3uContent,
+    };
+
+    final result = await api.post('/playlists', body) as Map<String, dynamic>;
 
     final id = (result['id'] as num).toInt();
     await api.post('/playlists/$id/refresh');
@@ -723,6 +726,7 @@ class PlaylistStore extends ChangeNotifier {
     required String type,
     required String name,
     String? m3uUrl,
+    String? m3uContent,
     String? xtreamServer,
     String? xtreamUsername,
     String? xtreamPassword,
@@ -732,7 +736,12 @@ class PlaylistStore extends ChangeNotifier {
     final body = <String, dynamic>{'name': name, 'type': type};
 
     if (type == 'm3u') {
-      body['m3u_url'] = m3uUrl;
+      if (m3uUrl != null && m3uUrl.isNotEmpty) {
+        body['m3u_url'] = m3uUrl;
+      }
+      if (m3uContent != null && m3uContent.isNotEmpty) {
+        body['m3u_content'] = m3uContent;
+      }
     } else if (type == 'xtream') {
       body['xtream_server'] = xtreamServer;
       body['xtream_username'] = xtreamUsername;
