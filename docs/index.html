@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IPTV Player Downloads</title>
+  <meta name="description" content="Install guides and download links for IPTV Player on Android, iOS, macOS, and Windows." />
+  <style>
+    :root {
+      --bg: #f5efe2;
+      --paper: #fffdf7;
+      --ink: #1a1a1a;
+      --muted: #5b5243;
+      --brand: #015f5b;
+      --brand-2: #e17c32;
+      --line: #d9ceb8;
+      --radius: 18px;
+      --shadow: 0 12px 30px rgba(43, 34, 16, 0.1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(70rem 40rem at -5% -10%, #fff7da 0%, transparent 65%),
+        radial-gradient(55rem 35rem at 110% -10%, #fddcb8 0%, transparent 55%),
+        linear-gradient(180deg, #f8f3e9 0%, var(--bg) 100%);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    .wrap {
+      width: min(1100px, 92vw);
+      margin: 0 auto;
+      padding: 44px 0 72px;
+    }
+
+    .hero {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 8px);
+      box-shadow: var(--shadow);
+      padding: clamp(24px, 4vw, 48px);
+      position: relative;
+      overflow: hidden;
+      animation: rise 620ms ease-out;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -120px;
+      top: -140px;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(225, 124, 50, 0.15) 0%, transparent 70%);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      letter-spacing: -0.02em;
+      max-width: 12ch;
+      line-height: 1.03;
+    }
+
+    .subtitle {
+      margin: 12px 0 0;
+      max-width: 60ch;
+      color: var(--muted);
+      font-size: 1.06rem;
+    }
+
+    .cards {
+      margin-top: 28px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: grid;
+      gap: 14px;
+      transform: translateY(8px);
+      opacity: 0;
+      animation: cardIn 0.5s ease-out forwards;
+    }
+
+    .card:nth-child(2) { animation-delay: 80ms; }
+    .card:nth-child(3) { animation-delay: 150ms; }
+    .card:nth-child(4) { animation-delay: 220ms; }
+
+    .card h2 {
+      margin: 0;
+      font-size: 1.2rem;
+    }
+
+    .platform {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.92rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      text-decoration: none;
+      font-weight: 700;
+      transition: transform 130ms ease, filter 130ms ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+    }
+
+    .btn-primary {
+      color: #fff;
+      background: linear-gradient(110deg, var(--brand), #024845);
+    }
+
+    .btn-secondary {
+      color: #3a3329;
+      background: #f9f2e8;
+      border: 1px solid #e4d5bc;
+    }
+
+    .note {
+      margin-top: 26px;
+      background: #fef7ee;
+      border: 1px dashed #d9b894;
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 0.95rem;
+      color: #5e462d;
+    }
+
+    .footer {
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    code {
+      font-family: Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #f3ede2;
+      border: 1px solid #e4dbc8;
+      padding: 0.08rem 0.35rem;
+      border-radius: 6px;
+      font-size: 0.9em;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 850px) {
+      .cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1>IPTV Player Downloads</h1>
+      <p class="subtitle">
+        One page for setup + downloads across all supported platforms. Pick your device, download the latest build, and follow the install notes.
+      </p>
+
+      <section class="cards" aria-label="Platform downloads">
+        <article class="card">
+          <span class="platform">Android</span>
+          <h2>Phone / Tablet</h2>
+          <p>Download the APK, open it, and allow installation from unknown sources when prompted.</p>
+          <div class="actions">
+            <a id="link-android" class="btn btn-primary" href="#">Download APK</a>
+            <a class="btn btn-secondary" href="https://developer.android.com/studio" target="_blank" rel="noopener">Android Tools</a>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="platform">iOS</span>
+          <h2>iPhone / iPad</h2>
+          <p>Use TestFlight or sideload a signed IPA. Trust the profile in device settings if required.</p>
+          <div class="actions">
+            <a id="link-ios" class="btn btn-primary" href="#">Download IPA</a>
+            <a class="btn btn-secondary" href="https://developer.apple.com/testflight/" target="_blank" rel="noopener">TestFlight</a>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="platform">macOS</span>
+          <h2>Desktop App</h2>
+          <p>Download the DMG and move the app to Applications. If blocked, allow it in Security & Privacy.</p>
+          <div class="actions">
+            <a id="link-macos" class="btn btn-primary" href="#">Download DMG</a>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="platform">Windows</span>
+          <h2>Desktop App</h2>
+          <p>Download the EXE installer, run it as admin if needed, and finish setup with the wizard.</p>
+          <div class="actions">
+            <a id="link-windows" class="btn btn-primary" href="#">Download EXE</a>
+          </div>
+        </article>
+      </section>
+
+      <div class="note">
+        Build files are expected in the latest GitHub Release with these names:
+        <code>iptv-player-android.apk</code>, <code>iptv-player-ios.ipa</code>, <code>iptv-player-macos.dmg</code>, <code>iptv-player-windows.exe</code>.
+      </div>
+
+      <p class="footer">
+        If your release assets use different file names, edit them in <code>docs/index.html</code>.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var host = window.location.hostname || "";
+      var path = window.location.pathname || "/";
+
+      var owner = host.endsWith(".github.io") ? host.split(".")[0] : "YOUR_GITHUB_OWNER";
+      var segments = path.split("/").filter(Boolean);
+      var repo = segments.length > 0 ? segments[0] : "YOUR_REPO";
+
+      var latestBase = "https://github.com/" + owner + "/" + repo + "/releases/latest/download/";
+
+      var assets = {
+        android: "iptv-player-android.apk",
+        ios: "iptv-player-ios.ipa",
+        macos: "iptv-player-macos.dmg",
+        windows: "iptv-player-windows.exe"
+      };
+
+      document.getElementById("link-android").href = latestBase + assets.android;
+      document.getElementById("link-ios").href = latestBase + assets.ios;
+      document.getElementById("link-macos").href = latestBase + assets.macos;
+      document.getElementById("link-windows").href = latestBase + assets.windows;
+    })();
+  </script>
+</body>
+</html>
