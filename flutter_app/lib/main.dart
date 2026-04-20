@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 
 import 'config/app_config.dart';
 import 'screens/home_screen.dart';
@@ -10,8 +11,13 @@ import 'services/auth_store.dart';
 import 'services/playlist_store.dart';
 
 void main() {
+  WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+  
   MediaKit.ensureInitialized();
   final api = ApiClient(baseUrl: AppConfig.apiBase);
+  
+  FlutterNativeSplash.remove();
   runApp(IptvFlutterApp(api: api));
 }
 
