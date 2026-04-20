@@ -34,6 +34,8 @@
 		<string>$(FLUTTER_BUILD_NUMBER)</string>
 		<key>LSRequiresIPhoneOS</key>
 		<true/>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>StreamPilot uses your photo library only when you choose a file to import content into the app.</string>
 		<key>UIApplicationSceneManifest</key>
 		<dict>
 			<key>UIApplicationSupportsMultipleScenes</key>
