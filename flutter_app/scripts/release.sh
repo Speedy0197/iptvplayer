@@ -17,7 +17,8 @@ Example:
   ./scripts/release.sh 1.0.1 2
   ./scripts/release.sh 1.0.1
 
-If build-number is omitted, a UTC timestamp is used (YYYYMMDDHHMM).
+If build-number is omitted, a UTC timestamp is used (YYDDDHHMM),
+which stays within Android's 32-bit versionCode limit.
 
 Requirements:
   - Run on macOS with Xcode and Flutter installed
@@ -99,6 +100,7 @@ fi
 VERSION="$1"
 BUILD_NUMBER="${2:-}"
 TAG="v$VERSION"
+ANDROID_VERSION_CODE_MAX=2147483647
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Version must be in semver format, for example 1.2.3" >&2
@@ -106,12 +108,18 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 if [[ -z "$BUILD_NUMBER" ]]; then
-  BUILD_NUMBER="$(date -u +%Y%m%d%H%M)"
+  # Use 9-digit UTC timestamp (YYDDDHHMM) to keep Android versionCode int-safe.
+  BUILD_NUMBER="$(date -u +%y%j%H%M)"
   echo "No build number provided. Using auto-generated build number: $BUILD_NUMBER"
 fi
 
 if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "Build number must be numeric" >&2
+  exit 1
+fi
+
+if (( BUILD_NUMBER > ANDROID_VERSION_CODE_MAX )); then
+  echo "Build number must be <= $ANDROID_VERSION_CODE_MAX for Android versionCode compatibility" >&2
   exit 1
 fi
 

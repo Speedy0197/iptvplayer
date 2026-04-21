@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -134,15 +135,17 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    _searchDialogPending = true;
-    try {
-      await store.ensureGlobalSearchData();
-
-      if (!mounted || _searchDialogOpen) return;
-      await _showSearchDialog();
-    } finally {
-      _searchDialogPending = false;
+    if (!_searchDialogPending) {
+      _searchDialogPending = true;
+      unawaited(
+        store.ensureGlobalSearchData().whenComplete(() {
+          _searchDialogPending = false;
+        }),
+      );
     }
+
+    if (!mounted || _searchDialogOpen) return;
+    await _showSearchDialog();
   }
 
   Future<void> _jumpToSearchResult(SearchResultItem item) async {
@@ -280,13 +283,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showSearchDialog() async {
-    if (!mounted || _searchDialogOpen || _searchDialogPending) return;
+    if (!mounted || _searchDialogOpen) return;
 
-    _searchDialogPending = true;
-    try {
-      await context.read<PlaylistStore>().ensureGlobalSearchData();
-    } finally {
-      _searchDialogPending = false;
+    if (!_searchDialogPending) {
+      _searchDialogPending = true;
+      unawaited(
+        context.read<PlaylistStore>().ensureGlobalSearchData().whenComplete(() {
+          _searchDialogPending = false;
+        }),
+      );
     }
 
     if (!mounted) return;

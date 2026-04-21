@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../config/app_config.dart';
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
 import 'register_screen.dart';
@@ -15,48 +14,16 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _apiCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
 
-  bool _apiInitialized = false;
   String? _error;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_apiInitialized) {
-      return;
-    }
-
-    _apiCtrl.text = AppConfig.apiBase;
-    _apiInitialized = true;
-  }
-
-  @override
   void dispose() {
-    _apiCtrl.dispose();
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
-  }
-
-  String? _validateApiBase(String? value) {
-    final trimmed = (value ?? '').trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-
-    final uri = Uri.tryParse(trimmed);
-    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-      return 'Use full URL, e.g. http://192.168.1.10:8080/api/v1';
-    }
-
-    if (uri.scheme != 'http' && uri.scheme != 'https') {
-      return 'URL must start with http:// or https://';
-    }
-
-    return null;
   }
 
   Future<void> _submit() async {
@@ -65,13 +32,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _error = null);
     try {
-      if (AppConfig.allowsCustomApiBase) {
-        final requestedApiBase = _apiCtrl.text.trim();
-        final currentApiBase = auth.api.baseUrl.trim();
-        if (requestedApiBase != currentApiBase) {
-          await auth.setApiBase(requestedApiBase);
-        }
-      }
       await auth.login(_usernameCtrl.text.trim(), _passwordCtrl.text);
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -85,7 +45,6 @@ class _LoginScreenState extends State<LoginScreen> {
     final auth = context.watch<AuthStore>();
     final theme = Theme.of(context);
     final viewInsets = MediaQuery.viewInsetsOf(context);
-    final allowsCustomApiBase = AppConfig.allowsCustomApiBase;
 
     return Scaffold(
       body: Container(
@@ -142,34 +101,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                                 const SizedBox(height: 20),
-                                if (allowsCustomApiBase) ...[
-                                  TextFormField(
-                                    controller: _apiCtrl,
-                                    keyboardType: TextInputType.url,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Server URL',
-                                      hintText: 'http://localhost:8080/api/v1',
-                                      prefixIcon: Icon(Icons.dns_outlined),
-                                    ),
-                                    validator: _validateApiBase,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Debug default: ${AppConfig.apiBase}',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: Colors.white60,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                ] else ...[
-                                  Text(
-                                    'Server: ${AppConfig.apiBase}',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: Colors.white60,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                ],
                                 TextFormField(
                                   controller: _usernameCtrl,
                                   decoration: const InputDecoration(
