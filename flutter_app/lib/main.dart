@@ -95,25 +95,46 @@ class _AuthGate extends StatefulWidget {
   State<_AuthGate> createState() => _AuthGateState();
 }
 
-class _AuthGateState extends State<_AuthGate> {
+class _AuthGateState extends State<_AuthGate> with WidgetsBindingObserver {
   bool _versionChecked = false;
+  bool _checkingVersion = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkVersion();
   }
 
-  Future<void> _checkVersion() async {
-    final result =
-        await VersionService(
-          latestVersionUrl: AppConfig.latestVersionUrl,
-        ).check();
-    if (!mounted) return;
-    if (result != null && result.updateRequired) {
-      await showForceUpdateDialog(context, result.latestVersion);
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkVersion();
     }
-    setState(() => _versionChecked = true);
+  }
+
+  Future<void> _checkVersion() async {
+    if (_checkingVersion) return;
+    _checkingVersion = true;
+    try {
+      final result =
+          await VersionService(
+            latestVersionUrl: AppConfig.latestVersionUrl,
+          ).check();
+      if (!mounted) return;
+      if (result != null && result.updateRequired) {
+        await showForceUpdateDialog(context, result.latestVersion);
+      }
+      if (!_versionChecked) setState(() => _versionChecked = true);
+    } finally {
+      _checkingVersion = false;
+    }
   }
 
   @override

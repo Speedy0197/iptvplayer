@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
@@ -46,8 +47,16 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
     _fullscreenResumeTimer?.cancel();
     if (!wasPlaying || !mounted) return;
 
+    // On iOS the AVPlayer session is interrupted during the native fullscreen
+    // transition and playback stops only after the transition completes.
+    // Wait for the transition to settle before starting the resume loop.
+    final initialDelay =
+        Platform.isIOS ? const Duration(milliseconds: 600) : Duration.zero;
+
     var attempts = 0;
-    _fullscreenResumeTimer = Timer.periodic(
+    _fullscreenResumeTimer = Timer(initialDelay, () {
+      if (!mounted) return;
+      _fullscreenResumeTimer = Timer.periodic(
       const Duration(milliseconds: 250),
       (timer) async {
         attempts += 1;
@@ -70,8 +79,8 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
         if (_player.state.playing || attempts >= 8) {
           timer.cancel();
         }
-      },
-    );
+      });
+    });
   }
 
   @override

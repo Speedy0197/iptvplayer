@@ -4,6 +4,7 @@ import '../models/models.dart';
 import 'api_client.dart';
 
 enum SearchResultType { channel, group }
+
 enum ChannelSortOrder { byName, byIndex }
 
 class SearchResultItem {
@@ -93,8 +94,7 @@ class PlaylistStore extends ChangeNotifier {
 
     switch (channelSortOrder) {
       case ChannelSortOrder.byIndex:
-        final sortComparison =
-            (a.sortOrder ?? 0).compareTo(b.sortOrder ?? 0);
+        final sortComparison = (a.sortOrder ?? 0).compareTo(b.sortOrder ?? 0);
         if (sortComparison != 0) {
           return sortComparison;
         }
@@ -363,6 +363,17 @@ class PlaylistStore extends ChangeNotifier {
     }
   }
 
+  void stopPlayback() {
+    if (nowPlaying == null && epgEntries.isEmpty) {
+      return;
+    }
+
+    nowPlaying = null;
+    epgEntries = const [];
+    loadingEpg = false;
+    notifyListeners();
+  }
+
   Future<void> refreshSelectedPlaylist() async {
     final id = selectedPlaylistId;
     if (id == null) return;
@@ -586,12 +597,12 @@ class PlaylistStore extends ChangeNotifier {
     channelSortOrder = channelSortOrder == ChannelSortOrder.byName
         ? ChannelSortOrder.byIndex
         : ChannelSortOrder.byName;
-    
+
     // Re-sort channels with the new sort order
     channels = _sortedChannels(channels);
     _globalChannels = _sortedChannels(_globalChannels);
     favoriteChannels = _sortedChannels(favoriteChannels);
-    
+
     notifyListeners();
   }
 

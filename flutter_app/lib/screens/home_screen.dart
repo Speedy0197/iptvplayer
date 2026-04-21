@@ -14,6 +14,7 @@ import '../widgets/channel_player.dart';
 enum _HomeSection { watch, favorites, playlists }
 
 typedef _GroupTapCallback = Future<void> Function(Group group);
+typedef _ChannelTapCallback = Future<void> Function(Channel channel);
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -231,6 +232,28 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Could not open group: $e')));
+    }
+  }
+
+  Future<void> _openFavoriteChannel(Channel channel) async {
+    if (!mounted) return;
+
+    final store = context.read<PlaylistStore>();
+
+    try {
+      await store.play(channel);
+
+      if (!mounted) return;
+
+      final isCompact = MediaQuery.sizeOf(context).width < _compactBreakpoint;
+      if (isCompact) {
+        await _openCompactPlayer(store);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not play channel: $e')));
     }
   }
 
@@ -1117,12 +1140,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   store: store,
                   onGroupTap: _openFavoriteGroup,
                 ),
-                _FavoriteChannelsList(store: store),
+                _FavoriteChannelsList(
+                  store: store,
+                  onChannelTap: _openFavoriteChannel,
+                ),
                 _PlayerPane(store: store),
               ] else ...[
                 _FavoritesView(
                   store: store,
                   onGroupTap: _openFavoriteGroup,
+                  onChannelTap: _openFavoriteChannel,
                   compact: true,
                   withPlayer: false,
                 ),
@@ -1247,6 +1274,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     channel: store.nowPlaying!,
                     iosCompact: isSmallCompact,
                     onTap: () => _openCompactPlayer(store),
+                    onStop: store.stopPlayback,
                   ),
                 MediaQuery.removeViewPadding(
                   context: context,
@@ -1320,7 +1348,11 @@ class _HomeScreenState extends State<HomeScreen> {
         if (isCompact) {
           return _buildCompactFavoritesSection(store);
         }
-        return _FavoritesView(store: store, onGroupTap: _openFavoriteGroup);
+        return _FavoritesView(
+          store: store,
+          onGroupTap: _openFavoriteGroup,
+          onChannelTap: _openFavoriteChannel,
+        );
       case _HomeSection.playlists:
         return _PlaylistManagementView(
           store: store,
@@ -2031,12 +2063,14 @@ class _ChannelsPane extends StatelessWidget {
 class _FavoritesView extends StatelessWidget {
   final PlaylistStore store;
   final _GroupTapCallback onGroupTap;
+  final _ChannelTapCallback onChannelTap;
   final bool compact;
   final bool withPlayer;
 
   const _FavoritesView({
     required this.store,
     required this.onGroupTap,
+    required this.onChannelTap,
     this.compact = false,
     this.withPlayer = true,
   });
@@ -2145,7 +2179,7 @@ class _FavoritesView extends StatelessWidget {
                         },
                         icon: const Icon(Icons.star, color: Colors.amber),
                       ),
-                      onTap: () => store.play(c),
+                      onTap: () => onChannelTap(c),
                     );
                   },
                 ),
@@ -2279,8 +2313,12 @@ class _FavoriteGroupsList extends StatelessWidget {
 
 class _FavoriteChannelsList extends StatelessWidget {
   final PlaylistStore store;
+  final _ChannelTapCallback onChannelTap;
 
-  const _FavoriteChannelsList({required this.store});
+  const _FavoriteChannelsList({
+    required this.store,
+    required this.onChannelTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2336,7 +2374,7 @@ class _FavoriteChannelsList extends StatelessWidget {
                           },
                           icon: const Icon(Icons.star, color: Colors.amber),
                         ),
-                        onTap: () => store.play(c),
+                        onTap: () => onChannelTap(c),
                       );
                     },
                   ),
@@ -2351,11 +2389,13 @@ class _CompactMiniPlayerBar extends StatelessWidget {
   final Channel channel;
   final bool iosCompact;
   final VoidCallback onTap;
+  final VoidCallback onStop;
 
   const _CompactMiniPlayerBar({
     required this.channel,
     required this.iosCompact,
     required this.onTap,
+    required this.onStop,
   });
 
   @override
@@ -2365,43 +2405,56 @@ class _CompactMiniPlayerBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         bottom: false,
-        child: InkWell(
-          onTap: onTap,
-          child: SizedBox(
-            height: iosCompact ? 58 : 62,
-            child: Row(
-              children: [
-                const SizedBox(width: 12),
-                _ChannelLogoAvatar(
-                  logoUrl: channel.logoUrl,
-                  radius: 16,
-                  iconSize: 16,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+        child: SizedBox(
+          height: iosCompact ? 58 : 62,
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: onTap,
+                  child: Row(
                     children: [
-                      Text(
-                        channel.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      const SizedBox(width: 12),
+                      _ChannelLogoAvatar(
+                        logoUrl: channel.logoUrl,
+                        radius: 16,
+                        iconSize: 16,
                       ),
-                      Text(
-                        channel.groupName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              channel.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              channel.groupName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
                       ),
+                      const Icon(Icons.expand_less),
                     ],
                   ),
                 ),
-                const Icon(Icons.expand_less),
-                const SizedBox(width: 12),
-              ],
-            ),
+              ),
+              IconButton(
+                tooltip: 'Stop playback',
+                onPressed: onStop,
+                icon: const Icon(Icons.stop_circle_outlined),
+              ),
+              const SizedBox(width: 4),
+            ],
           ),
         ),
       ),
@@ -2514,10 +2567,62 @@ class _PlayerPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Channel? channel = store.nowPlaying;
+    final isCompactLayout = MediaQuery.sizeOf(context).width < 900;
 
     if (channel == null) {
       return const Card(
         child: Center(child: Text('Select a channel to start playback')),
+      );
+    }
+
+    final headerContent = [
+      ChannelPlayer(streamUrl: channel.streamUrl),
+      const SizedBox(height: 12),
+      Text(
+        channel.name,
+        style: Theme.of(context).textTheme.titleLarge,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      Text(channel.groupName, style: Theme.of(context).textTheme.bodySmall),
+      const SizedBox(height: 16),
+      const Text('EPG', style: TextStyle(fontWeight: FontWeight.bold)),
+      const SizedBox(height: 8),
+    ];
+
+    if (isCompactLayout) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: ListView(
+            children: [
+              ...headerContent,
+              if (store.loadingEpg)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (store.epgEntries.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text('No EPG data available'),
+                )
+              else
+                ...store.epgEntries.map(
+                  (entry) => Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      title: Text(entry.title),
+                      subtitle: Text(entry.description),
+                      trailing: Text(
+                        '${_fmtTime(entry.startTime)} - ${_fmtTime(entry.endTime)}',
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -2527,21 +2632,7 @@ class _PlayerPane extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ChannelPlayer(streamUrl: channel.streamUrl),
-            const SizedBox(height: 12),
-            Text(
-              channel.name,
-              style: Theme.of(context).textTheme.titleLarge,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              channel.groupName,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
-            const Text('EPG', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            ...headerContent,
             Expanded(
               child: store.loadingEpg
                   ? const Center(child: CircularProgressIndicator())
