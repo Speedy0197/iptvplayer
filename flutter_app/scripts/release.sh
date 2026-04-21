@@ -195,9 +195,13 @@ upload_to_testflight_if_configured
 cd "$REPO_DIR"
 
 update_pages_version_file
-if ! git diff --quiet -- "$VERSION_FILE"; then
-  git add "$VERSION_FILE"
-  git commit -m "chore: update pages latest version to $VERSION"
+
+# Update pubspec.yaml version to match the release
+sed -i '' "s/^version: .*/version: $VERSION+$BUILD_NUMBER/" "$APP_DIR/pubspec.yaml"
+
+if ! git diff --quiet -- "$VERSION_FILE" "$APP_DIR/pubspec.yaml"; then
+  git add "$VERSION_FILE" "$APP_DIR/pubspec.yaml"
+  git commit -m "chore: release $TAG"
   git push origin HEAD
 fi
 

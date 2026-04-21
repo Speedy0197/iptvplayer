@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class VersionCheckResult {
   final bool updateRequired;
@@ -38,7 +39,6 @@ class VersionService {
         latestVersion: latestVersion,
       );
     } catch (_) {
-      // Network errors should not block the user
       return null;
     }
   }
@@ -61,7 +61,11 @@ class VersionService {
 }
 
 /// Shows a non-dismissable dialog that blocks the UI when a forced update is required.
-Future<void> showForceUpdateDialog(BuildContext context, String latestVersion) {
+Future<void> showForceUpdateDialog(
+  BuildContext context,
+  String latestVersion,
+  String downloadUrl,
+) {
   return showDialog<void>(
     context: context,
     barrierDismissible: false,
@@ -74,11 +78,12 @@ Future<void> showForceUpdateDialog(BuildContext context, String latestVersion) {
           'Please update your app to the latest version.',
         ),
         actions: [
-          TextButton(
-            onPressed: () {
-              // No-op: force update, cannot dismiss
-            },
-            child: const Text('OK'),
+          FilledButton(
+            onPressed: () => launchUrl(
+              Uri.parse(downloadUrl),
+              mode: LaunchMode.externalApplication,
+            ),
+            child: const Text('Download Update'),
           ),
         ],
       ),

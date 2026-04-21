@@ -111,7 +111,7 @@ class _AuthGateState extends State<_AuthGate> {
         ).check();
     if (!mounted) return;
     if (result != null && result.updateRequired) {
-      await showForceUpdateDialog(context, result.latestVersion);
+      await showForceUpdateDialog(context, result.latestVersion, AppConfig.downloadPageUrl);
     }
     setState(() => _versionChecked = true);
   }
