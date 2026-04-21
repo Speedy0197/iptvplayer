@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>StreamPilot Downloads</title>
+  <title>StreamPilot</title>
   <meta name="description" content="Install guides and download links for StreamPilot on Android, iOS, macOS, and Windows." />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
@@ -71,6 +71,13 @@
       line-height: 1.03;
     }
 
+    .hero-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
     .subtitle {
       margin: 12px 0 0;
       max-width: 60ch;
@@ -82,7 +89,7 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      margin-top: 16px;
+      margin-top: 0;
       padding: 8px 12px;
       border-radius: 999px;
       border: 1px solid #d9ceb8;
@@ -114,7 +121,6 @@
     }
 
     .card-footer {
-      margin-top: auto;
       display: flex;
       flex-direction: column;
       gap: 14px;
@@ -262,11 +268,10 @@
 <body>
   <main class="wrap">
     <section class="hero">
-      <h1>StreamPilot Downloads</h1>
-      <p class="subtitle">
-        One page for setup + downloads across all supported platforms. Pick your device, download the latest StreamPilot build, and follow the install notes.
-      </p>
-      <p class="version-pill">Latest version: <span id="latest-version">Loading...</span></p>
+      <div class="hero-head">
+        <h1>StreamPilot</h1>
+        <p class="version-pill">Latest version: <span id="latest-version">Loading...</span></p>
+      </div>
 
       <section class="cards" aria-label="Platform downloads">
         <article class="card">

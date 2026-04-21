@@ -68,7 +68,7 @@ class PlaylistStore extends ChangeNotifier {
   bool _favoriteGroupsLoaded = false;
   bool loadingEpg = false;
   final Set<int> _refreshingPlaylistIds = <int>{};
-  ChannelSortOrder channelSortOrder = ChannelSortOrder.byName;
+  ChannelSortOrder channelSortOrder = ChannelSortOrder.byIndex;
 
   String _favoriteGroupDeletePath(int playlistId, String groupName) {
     final query = Uri(
@@ -90,10 +90,15 @@ class PlaylistStore extends ChangeNotifier {
     if (a.isFavorite != b.isFavorite) {
       return a.isFavorite ? -1 : 1;
     }
-    
+
     switch (channelSortOrder) {
       case ChannelSortOrder.byIndex:
-        return (a.sortOrder ?? 0).compareTo(b.sortOrder ?? 0);
+        final sortComparison =
+            (a.sortOrder ?? 0).compareTo(b.sortOrder ?? 0);
+        if (sortComparison != 0) {
+          return sortComparison;
+        }
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       case ChannelSortOrder.byName:
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     }
