@@ -83,6 +83,10 @@ func ensurePlaylistForeignKeys() {
 		rebuildChannelsTableWithPlaylistsFK()
 	}
 
+	if channelFKTarget := favoriteChannelsForeignKeyTarget(); channelFKTarget != "" && channelFKTarget != "channels" {
+		rebuildFavoriteChannelsTableWithChannelsFK(channelFKTarget)
+	}
+
 	if tableReferences("epg_cache", "playlists_v1") {
 		rebuildEpgCacheTableWithPlaylistsFK()
 	}
@@ -123,6 +127,89 @@ func tableReferences(tableName, referencedTable string) bool {
 	}
 
 	return false
+}
+
+func favoriteChannelsForeignKeyTarget() string {
+	rows, err := DB.Query("PRAGMA foreign_key_list(favorite_channels)")
+	if err != nil {
+		log.Fatalf("failed to inspect foreign keys for favorite_channels: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int
+		var seq int
+		var refTable string
+		var fromCol string
+		var toCol string
+		var onUpdate string
+		var onDelete string
+		var match string
+
+		if err := rows.Scan(&id, &seq, &refTable, &fromCol, &toCol, &onUpdate, &onDelete, &match); err != nil {
+			log.Fatalf("failed to scan foreign key for favorite_channels: %v", err)
+		}
+
+		if fromCol == "channel_id" {
+			return refTable
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Fatalf("failed reading foreign key list for favorite_channels: %v", err)
+	}
+
+	return ""
+}
+
+func rebuildFavoriteChannelsTableWithChannelsFK(previousTarget string) {
+	log.Printf("repairing favorite_channels foreign key reference from %s to channels", previousTarget)
+
+	tx, err := DB.Begin()
+	if err != nil {
+		log.Fatalf("failed to begin favorite_channels FK repair transaction: %v", err)
+	}
+
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS favorite_channels_fk_fix_old`); err != nil {
+		tx.Rollback()
+		log.Fatalf("failed to clean previous favorite_channels temp table: %v", err)
+	}
+
+	if _, err := tx.Exec(`ALTER TABLE favorite_channels RENAME TO favorite_channels_fk_fix_old`); err != nil {
+		tx.Rollback()
+		log.Fatalf("failed to rename favorite_channels table for FK repair: %v", err)
+	}
+
+	if _, err := tx.Exec(`CREATE TABLE favorite_channels (
+			user_id INTEGER NOT NULL,
+			channel_id INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(user_id, channel_id),
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+		)`); err != nil {
+		tx.Rollback()
+		log.Fatalf("failed to create repaired favorite_channels table: %v", err)
+	}
+
+	if _, err := tx.Exec(`INSERT INTO favorite_channels (user_id, channel_id, created_at)
+		SELECT fc.user_id, fc.channel_id, fc.created_at
+		FROM favorite_channels_fk_fix_old fc
+		JOIN users u ON u.id = fc.user_id
+		JOIN channels c ON c.id = fc.channel_id`); err != nil {
+		tx.Rollback()
+		log.Fatalf("failed to copy favorite_channels during FK repair: %v", err)
+	}
+
+	if _, err := tx.Exec(`DROP TABLE favorite_channels_fk_fix_old`); err != nil {
+		tx.Rollback()
+		log.Fatalf("failed to drop old favorite_channels table during FK repair: %v", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		log.Fatalf("failed to commit favorite_channels FK repair: %v", err)
+	}
 }
 
 func rebuildChannelsTableWithPlaylistsFK() {

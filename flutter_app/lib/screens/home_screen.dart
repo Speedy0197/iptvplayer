@@ -1945,7 +1945,16 @@ class _ChannelsPane extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             trailing: IconButton(
-                              onPressed: () => store.toggleFavorite(c),
+                              onPressed: () async {
+                                try {
+                                  await store.toggleFavorite(c);
+                                } on ApiException catch (e) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(e.message)),
+                                  );
+                                }
+                              },
                               icon: Icon(
                                 c.isFavorite ? Icons.star : Icons.star_border,
                                 color: c.isFavorite ? Colors.amber : null,
@@ -1989,7 +1998,16 @@ class _ChannelsPane extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             trailing: IconButton(
-                              onPressed: () => store.toggleFavorite(c),
+                              onPressed: () async {
+                                try {
+                                  await store.toggleFavorite(c);
+                                } on ApiException catch (e) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(e.message)),
+                                  );
+                                }
+                              },
                               icon: Icon(
                                 c.isFavorite ? Icons.star : Icons.star_border,
                                 color: c.isFavorite ? Colors.amber : null,
@@ -2115,7 +2133,16 @@ class _FavoritesView extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       trailing: IconButton(
-                        onPressed: () => store.toggleFavorite(c),
+                        onPressed: () async {
+                          try {
+                            await store.toggleFavorite(c);
+                          } on ApiException catch (e) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text(e.message)));
+                          }
+                        },
                         icon: const Icon(Icons.star, color: Colors.amber),
                       ),
                       onTap: () => store.play(c),
@@ -2297,7 +2324,16 @@ class _FavoriteChannelsList extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         trailing: IconButton(
-                          onPressed: () => store.toggleFavorite(c),
+                          onPressed: () async {
+                            try {
+                              await store.toggleFavorite(c);
+                            } on ApiException catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(e.message)),
+                              );
+                            }
+                          },
                           icon: const Icon(Icons.star, color: Colors.amber),
                         ),
                         onTap: () => store.play(c),

@@ -59,20 +59,30 @@ func AddFavoriteChannel(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the channel belongs to one of the user's playlists
 	var exists int
-	database.DB.QueryRow(
+	if err := database.DB.QueryRow(
 		`SELECT COUNT(*) FROM channels c
 		 JOIN playlists p ON p.id = c.playlist_id
 		 WHERE c.id = ? AND p.user_id = ?`, req.ChannelID, userID,
-	).Scan(&exists)
+	).Scan(&exists); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("db error: %v", err))
+		return
+	}
 	if exists == 0 {
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
-	database.DB.Exec(
+	if _, err := database.DB.Exec(
 		`INSERT OR IGNORE INTO favorite_channels (user_id, channel_id) VALUES (?, ?)`,
 		userID, req.ChannelID,
-	)
+	); err != nil {
+		if isSQLiteBusyErr(err) {
+			writeError(w, http.StatusServiceUnavailable, "database busy, please retry")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("db error: %v", err))
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -84,10 +94,17 @@ func RemoveFavoriteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	database.DB.Exec(
+	if _, err := database.DB.Exec(
 		`DELETE FROM favorite_channels WHERE user_id = ? AND channel_id = ?`,
 		userID, channelID,
-	)
+	); err != nil {
+		if isSQLiteBusyErr(err) {
+			writeError(w, http.StatusServiceUnavailable, "database busy, please retry")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("db error: %v", err))
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

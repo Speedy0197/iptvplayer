@@ -29,6 +29,24 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
   bool _loading = true;
   String? _error;
 
+  Future<void> _toggleNativeFullscreen({required bool entering}) async {
+    final wasPlaying = _player.state.playing;
+
+    if (entering) {
+      await defaultEnterNativeFullscreen();
+    } else {
+      await defaultExitNativeFullscreen();
+    }
+
+    if (!wasPlaying) return;
+
+    // Some devices pause during orientation/UI mode changes.
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    if (mounted && !_player.state.playing) {
+      await _player.play();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -189,6 +207,8 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
       controls: AdaptiveVideoControls,
       fit: BoxFit.contain,
       pauseUponEnteringBackgroundMode: false,
+      onEnterFullscreen: () => _toggleNativeFullscreen(entering: true),
+      onExitFullscreen: () => _toggleNativeFullscreen(entering: false),
     );
   }
 }
