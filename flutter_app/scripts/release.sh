@@ -198,6 +198,7 @@ update_pages_version_file
 if ! git diff --quiet -- "$VERSION_FILE"; then
   git add "$VERSION_FILE"
   git commit -m "chore: update pages latest version to $VERSION"
+  git push origin HEAD
 fi
 
 echo "Creating and pushing tag $TAG..."
