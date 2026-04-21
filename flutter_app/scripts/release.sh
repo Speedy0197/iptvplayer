@@ -7,6 +7,7 @@ APP_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd -- "$APP_DIR/.." && pwd)"
 DIST_DIR="$APP_DIR/dist"
 MACOS_STAGE_DIR="$DIST_DIR/macos"
+VERSION_FILE="$REPO_DIR/docs/version.json"
 
 usage() {
   cat <<'EOF'
@@ -75,6 +76,14 @@ upload_to_testflight_if_configured() {
 
   rm -rf "$key_dir"
   echo "TestFlight upload submitted. Processing continues in App Store Connect."
+}
+
+update_pages_version_file() {
+  cat > "$VERSION_FILE" <<EOF
+{
+  "latest_version": "$VERSION"
+}
+EOF
 }
 
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
@@ -184,6 +193,12 @@ cp "$IPA_SOURCE" "$DIST_DIR/streampilot-ios.ipa"
 upload_to_testflight_if_configured
 
 cd "$REPO_DIR"
+
+update_pages_version_file
+if ! git diff --quiet -- "$VERSION_FILE"; then
+  git add "$VERSION_FILE"
+  git commit -m "chore: update pages latest version to $VERSION"
+fi
 
 echo "Creating and pushing tag $TAG..."
 git tag -a "$TAG" -m "Release $TAG"

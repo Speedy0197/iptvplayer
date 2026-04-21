@@ -420,7 +420,7 @@
       var repo = segments.length > 0 ? segments[0] : "YOUR_REPO";
 
       var latestBase = "https://github.com/" + owner + "/" + repo + "/releases/latest/download/";
-      var latestReleaseApi = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
+      var versionJsonUrl = "./version.json";
       var testFlightUrl = "https://testflight.apple.com/join/fJb6nsgN";
 
       var assets = {
@@ -449,15 +449,15 @@
         iosCaption.textContent = "Add your public TestFlight invite link to enable QR install.";
       }
 
-      fetch(latestReleaseApi)
+      fetch(versionJsonUrl)
         .then(function (response) {
           if (!response.ok) {
-            throw new Error("Unable to load latest release");
+            throw new Error("Unable to load version file");
           }
           return response.json();
         })
-        .then(function (release) {
-          var version = release && release.tag_name ? release.tag_name : "Unavailable";
+        .then(function (data) {
+          var version = data && data.latest_version ? data.latest_version : "Unavailable";
           document.getElementById("latest-version").textContent = version;
         })
         .catch(function () {

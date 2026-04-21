@@ -9,6 +9,7 @@ import 'screens/login_screen.dart';
 import 'services/api_client.dart';
 import 'services/auth_store.dart';
 import 'services/playlist_store.dart';
+import 'services/version_service.dart';
 
 void main() {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
@@ -87,14 +88,39 @@ class IptvFlutterApp extends StatelessWidget {
   }
 }
 
-class _AuthGate extends StatelessWidget {
+class _AuthGate extends StatefulWidget {
   const _AuthGate();
+
+  @override
+  State<_AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<_AuthGate> {
+  bool _versionChecked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkVersion();
+  }
+
+  Future<void> _checkVersion() async {
+    final result =
+        await VersionService(
+          latestVersionUrl: AppConfig.latestVersionUrl,
+        ).check();
+    if (!mounted) return;
+    if (result != null && result.updateRequired) {
+      await showForceUpdateDialog(context, result.latestVersion);
+    }
+    setState(() => _versionChecked = true);
+  }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthStore>();
 
-    if (auth.initializing) {
+    if (!_versionChecked || auth.initializing) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
