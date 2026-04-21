@@ -21,7 +21,6 @@ class AppConfig {
 
   static bool get allowsCustomApiBase => kDebugMode;
 
-  static String get apiBase =>
-      allowsCustomApiBase ? debugApiBase : releaseApiBase;
+  static String get apiBase => releaseApiBase;
 }
 
