@@ -24,6 +24,7 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
   StreamSubscription<bool>? _bufferingSub;
   StreamSubscription<String>? _errorSub;
   Timer? _startupTimer;
+  Timer? _fullscreenResumeTimer;
 
   int _attempt = 0;
   bool _loading = true;
@@ -38,13 +39,39 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
       await defaultExitNativeFullscreen();
     }
 
-    if (!wasPlaying) return;
+    _ensurePlaybackAfterFullscreenTransition(wasPlaying: wasPlaying);
+  }
 
-    // Some devices pause during orientation/UI mode changes.
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    if (mounted && !_player.state.playing) {
-      await _player.play();
-    }
+  void _ensurePlaybackAfterFullscreenTransition({required bool wasPlaying}) {
+    _fullscreenResumeTimer?.cancel();
+    if (!wasPlaying || !mounted) return;
+
+    var attempts = 0;
+    _fullscreenResumeTimer = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (timer) async {
+        attempts += 1;
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (_player.state.playing) {
+          timer.cancel();
+          return;
+        }
+
+        try {
+          await _player.play();
+        } catch (_) {
+          // Ignore transient transition errors while fullscreen route settles.
+        }
+
+        if (_player.state.playing || attempts >= 8) {
+          timer.cancel();
+        }
+      },
+    );
   }
 
   @override
@@ -143,6 +170,7 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
 
   @override
   void dispose() {
+    _fullscreenResumeTimer?.cancel();
     _startupTimer?.cancel();
     _playingSub?.cancel();
     _bufferingSub?.cancel();
@@ -206,7 +234,8 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
       controller: _controller,
       controls: AdaptiveVideoControls,
       fit: BoxFit.contain,
-      pauseUponEnteringBackgroundMode: false,
+      pauseUponEnteringBackgroundMode: true,
+      resumeUponEnteringForegroundMode: true,
       onEnterFullscreen: () => _toggleNativeFullscreen(entering: true),
       onExitFullscreen: () => _toggleNativeFullscreen(entering: false),
     );
