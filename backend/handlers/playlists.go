@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/flodev/iptvplayer/database"
 	"github.com/flodev/iptvplayer/middleware"
@@ -262,17 +261,6 @@ type badRequestError struct{ msg string }
 func (e badRequestError) Error() string { return e.msg }
 
 func errBadRequest(msg string) error { return badRequestError{msg: msg} }
-
-func isSQLiteBusy(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "database is locked") ||
-		strings.Contains(msg, "database is busy") ||
-		strings.Contains(msg, "sqlite_busy") ||
-		strings.Contains(msg, "sqlite_locked")
-}
 
 func DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)

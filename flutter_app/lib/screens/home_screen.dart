@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../config/ui_constants.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
@@ -25,7 +26,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _searchCtrl = TextEditingController();
-  static const double _compactBreakpoint = 900;
   static const int _watchViewPlaylists = 0;
   static const int _watchViewGroups = 1;
   static const int _watchViewChannels = 2;
@@ -62,7 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     final isSmallCompact =
-        MediaQuery.sizeOf(context).width < _compactBreakpoint;
+        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
     final favoritesPlayerPage = isSmallCompact ? 2 : 1;
 
     if (_section == _HomeSection.favorites) {
@@ -70,7 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_compactFavoritesController.hasClients) {
         await _compactFavoritesController.animateToPage(
           favoritesPlayerPage,
-          duration: const Duration(milliseconds: 220),
+          duration: kTabAnimation,
           curve: Curves.easeOut,
         );
       }
@@ -86,7 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!mounted || !_compactWatchController.hasClients) return;
         _compactWatchController.animateToPage(
           _watchViewPlayer,
-          duration: const Duration(milliseconds: 220),
+          duration: kTabAnimation,
           curve: Curves.easeOut,
         );
       });
@@ -97,7 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_compactWatchController.hasClients) {
       await _compactWatchController.animateToPage(
         _watchViewPlayer,
-        duration: const Duration(milliseconds: 220),
+        duration: kTabAnimation,
         curve: Curves.easeOut,
       );
     }
@@ -111,7 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_compactWatchController.hasClients) {
       await _compactWatchController.animateToPage(
         page,
-        duration: const Duration(milliseconds: 220),
+        duration: kTabAnimation,
         curve: Curves.easeOut,
       );
     }
@@ -178,7 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _section = _HomeSection.watch);
         if (item.type == SearchResultType.group) {
           final isSmallCompact =
-              MediaQuery.sizeOf(context).width < _compactBreakpoint;
+              MediaQuery.sizeOf(context).width < kCompactBreakpoint;
           if (isSmallCompact) {
             await _goToCompactWatchPage(_watchViewChannels);
           }
@@ -194,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final store = context.read<PlaylistStore>();
     final isSmallCompact =
-        MediaQuery.sizeOf(context).width < _compactBreakpoint;
+        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
 
     if (_section != _HomeSection.watch) {
       setState(() => _section = _HomeSection.watch);
@@ -222,7 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (!mounted || !_compactWatchController.hasClients) return;
           _compactWatchController.animateToPage(
             _watchViewChannels,
-            duration: const Duration(milliseconds: 220),
+            duration: kTabAnimation,
             curve: Curves.easeOut,
           );
         });
@@ -245,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (!mounted) return;
 
-      final isCompact = MediaQuery.sizeOf(context).width < _compactBreakpoint;
+      final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
       if (isCompact) {
         await _openCompactPlayer(store);
       }
@@ -977,7 +977,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildCompactWatchSection(PlaylistStore store) {
     final isSmallCompact =
-        MediaQuery.sizeOf(context).width < _compactBreakpoint;
+        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
 
     return Column(
       children: [
@@ -1071,7 +1071,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildCompactFavoritesSection(PlaylistStore store) {
     final isSmallCompact =
-        MediaQuery.sizeOf(context).width < _compactBreakpoint;
+        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
 
     return Column(
       children: [
@@ -1091,7 +1091,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (_compactFavoritesController.hasClients) {
                       await _compactFavoritesController.animateToPage(
                         index,
-                        duration: const Duration(milliseconds: 220),
+                        duration: kTabAnimation,
                         curve: Curves.easeOut,
                       );
                     }
@@ -1118,7 +1118,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (_compactFavoritesController.hasClients) {
                       await _compactFavoritesController.animateToPage(
                         page,
-                        duration: const Duration(milliseconds: 220),
+                        duration: kTabAnimation,
                         curve: Curves.easeOut,
                       );
                     }
@@ -1165,7 +1165,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final store = context.watch<PlaylistStore>();
-    final isCompact = MediaQuery.sizeOf(context).width < _compactBreakpoint;
+    final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
     final isSmallCompact = isCompact;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
 
@@ -1333,7 +1333,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSection(BuildContext context, PlaylistStore store) {
-    final isCompact = MediaQuery.sizeOf(context).width < _compactBreakpoint;
+    final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
 
     switch (_section) {
       case _HomeSection.watch:

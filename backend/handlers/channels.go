@@ -165,7 +165,7 @@ func RefreshPlaylist(w http.ResponseWriter, r *http.Request) {
 
 	if err := persistRefreshedChannels(playlistID, channels); err != nil {
 		log.Printf("refresh playlist %d failed: %v", playlistID, err)
-		if isSQLiteBusyErr(err) {
+		if isSQLiteBusy(err) {
 			writeError(w, http.StatusServiceUnavailable, "database busy, please retry")
 			return
 		}
@@ -184,7 +184,7 @@ func persistRefreshedChannels(playlistID int64, channels []models.Channel) error
 		tx, err := database.DB.Begin()
 		if err != nil {
 			lastErr = err
-			if isSQLiteBusyErr(err) && attempt < maxAttempts {
+			if isSQLiteBusy(err) && attempt < maxAttempts {
 				time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 				continue
 			}
@@ -193,7 +193,7 @@ func persistRefreshedChannels(playlistID int64, channels []models.Channel) error
 
 		if _, err := tx.Exec(`DELETE FROM channels WHERE playlist_id = ?`, playlistID); err != nil {
 			lastErr = err
-			if isSQLiteBusyErr(err) && attempt < maxAttempts {
+			if isSQLiteBusy(err) && attempt < maxAttempts {
 				tx.Rollback()
 				time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 				continue
@@ -207,7 +207,7 @@ func persistRefreshedChannels(playlistID int64, channels []models.Channel) error
 		)
 		if err != nil {
 			lastErr = err
-			if isSQLiteBusyErr(err) && attempt < maxAttempts {
+			if isSQLiteBusy(err) && attempt < maxAttempts {
 				tx.Rollback()
 				time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 				continue
@@ -227,7 +227,7 @@ func persistRefreshedChannels(playlistID int64, channels []models.Channel) error
 		stmt.Close()
 
 		if insertFailed {
-			if isSQLiteBusyErr(lastErr) && attempt < maxAttempts {
+			if isSQLiteBusy(lastErr) && attempt < maxAttempts {
 				tx.Rollback()
 				time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 				continue
@@ -237,7 +237,7 @@ func persistRefreshedChannels(playlistID int64, channels []models.Channel) error
 
 		if _, err := tx.Exec(`UPDATE playlists SET last_refreshed = ? WHERE id = ?`, time.Now(), playlistID); err != nil {
 			lastErr = err
-			if isSQLiteBusyErr(err) && attempt < maxAttempts {
+			if isSQLiteBusy(err) && attempt < maxAttempts {
 				tx.Rollback()
 				time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 				continue
@@ -247,7 +247,7 @@ func persistRefreshedChannels(playlistID int64, channels []models.Channel) error
 
 		if err := tx.Commit(); err != nil {
 			lastErr = err
-			if isSQLiteBusyErr(err) && attempt < maxAttempts {
+			if isSQLiteBusy(err) && attempt < maxAttempts {
 				tx.Rollback()
 				time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 				continue
@@ -263,17 +263,6 @@ func persistRefreshedChannels(playlistID int64, channels []models.Channel) error
 		log.Printf("refresh playlist %d failed after retries: %v", playlistID, lastErr)
 	}
 	return lastErr
-}
-
-func isSQLiteBusyErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "database is locked") ||
-		strings.Contains(msg, "database is busy") ||
-		strings.Contains(msg, "sqlite_busy") ||
-		strings.Contains(msg, "sqlite_locked")
 }
 
 // fetchM3U downloads and parses an M3U playlist
@@ -331,23 +320,6 @@ func parseM3U(r io.Reader, playlistID int64) ([]models.Channel, error) {
 	}
 
 	return channels, scanner.Err()
-}
-
-func withProgramParam(rawURL, program string) string {
-	program = strings.TrimSpace(program)
-	if program == "" {
-		return rawURL
-	}
-
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme == "" {
-		return rawURL
-	}
-
-	q := u.Query()
-	q.Set("program", program)
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 func extractM3UAttr(line, attr string) string {
@@ -588,33 +560,4 @@ func urlReachable(client *http.Client, rawURL string) bool {
 	defer resp.Body.Close()
 
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
-}
-
-func enigmaProgramFromServiceRef(sRef string) string {
-	parts := strings.Split(sRef, ":")
-	// Enigma2 format: 1:0:<serviceType>:<serviceIdHex>:<tsid>:<onid>:...
-	if len(parts) < 4 {
-		return ""
-	}
-
-	v, err := strconv.ParseInt(parts[3], 16, 64)
-	if err != nil || v <= 0 {
-		return ""
-	}
-
-	return strconv.FormatInt(v, 10)
-}
-
-func enigmaProgramFromStreamURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-
-	path := strings.TrimPrefix(u.Path, "/")
-	if path == "" {
-		return ""
-	}
-
-	return enigmaProgramFromServiceRef(path)
 }
