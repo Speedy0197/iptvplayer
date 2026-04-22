@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/tls"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -29,6 +30,7 @@ var (
 	SMTPUsername    string
 	SMTPPassword    string
 	SMTPFrom        string
+	SMTPTimeout     = 15 * time.Second
 	ResetLinkBase   string
 	ResetTokenTTL   = time.Hour
 	ResetRateWindow = time.Minute
@@ -208,9 +210,11 @@ func RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := sendPasswordResetEmail(email, rawToken); err != nil {
-		log.Printf("failed to send reset email: %v", err)
-	}
+	go func(emailAddress, token string) {
+		if err := sendPasswordResetEmail(emailAddress, token); err != nil {
+			log.Printf("failed to send reset email to %s: %v", emailAddress, err)
+		}
+	}(email, rawToken)
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset link has been sent."})
 }
@@ -377,12 +381,103 @@ func sendPasswordResetEmail(toEmail, rawToken string) error {
 		body)
 
 	addr := net.JoinHostPort(SMTPHost, SMTPPort)
-	var auth smtp.Auth
-	if SMTPUsername != "" {
-		auth = smtp.PlainAuth("", SMTPUsername, SMTPPassword, SMTPHost)
+
+	if SMTPPort == "465" {
+		return sendMailImplicitTLS(addr, toEmail, msg)
 	}
 
-	return smtp.SendMail(addr, auth, SMTPFrom, []string{toEmail}, msg)
+	return sendMailWithTimeout(addr, toEmail, msg, true)
+}
+
+func sendMailImplicitTLS(addr, toEmail string, msg []byte) error {
+	timeout := SMTPTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
+		ServerName: SMTPHost,
+		MinVersion: tls.VersionTLS12,
+	})
+	if err != nil {
+		return fmt.Errorf("dial implicit TLS failed: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	client, err := smtp.NewClient(conn, SMTPHost)
+	if err != nil {
+		return fmt.Errorf("smtp client failed: %w", err)
+	}
+	defer client.Close()
+
+	return sendWithClient(client, toEmail, msg)
+}
+
+func sendMailWithTimeout(addr, toEmail string, msg []byte, useStartTLS bool) error {
+	timeout := SMTPTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("dial failed: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	client, err := smtp.NewClient(conn, SMTPHost)
+	if err != nil {
+		return fmt.Errorf("smtp client failed: %w", err)
+	}
+	defer client.Close()
+
+	if useStartTLS {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(&tls.Config{ServerName: SMTPHost, MinVersion: tls.VersionTLS12}); err != nil {
+				return fmt.Errorf("starttls failed: %w", err)
+			}
+		}
+	}
+
+	return sendWithClient(client, toEmail, msg)
+}
+
+func sendWithClient(client *smtp.Client, toEmail string, msg []byte) error {
+	if SMTPUsername != "" {
+		auth := smtp.PlainAuth("", SMTPUsername, SMTPPassword, SMTPHost)
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("auth failed: %w", err)
+		}
+	}
+
+	if err := client.Mail(SMTPFrom); err != nil {
+		return fmt.Errorf("mail from failed: %w", err)
+	}
+	if err := client.Rcpt(toEmail); err != nil {
+		return fmt.Errorf("rcpt failed: %w", err)
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("data failed: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		_ = w.Close()
+		return fmt.Errorf("write failed: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("close data failed: %w", err)
+	}
+
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("quit failed: %w", err)
+	}
+
+	return nil
 }
 
 func allowResetFor(email, ip string) bool {
