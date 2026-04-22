@@ -82,13 +82,29 @@ class AuthStore extends ChangeNotifier {
     busy = true;
     notifyListeners();
     try {
-      final json =
-          await api.post('/auth/register', {
-                'email': email,
-                'password': password,
-              })
-              as Map<String, dynamic>;
-      await _persist(AuthResponse.fromJson(json));
+      await api.post('/auth/register', {'email': email, 'password': password});
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> verifyEmail(String email, String code) async {
+    busy = true;
+    notifyListeners();
+    try {
+      await api.post('/auth/verify-email', {'email': email, 'code': code});
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> resendVerification(String email) async {
+    busy = true;
+    notifyListeners();
+    try {
+      await api.post('/auth/resend-verification', {'email': email});
     } finally {
       busy = false;
       notifyListeners();

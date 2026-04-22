@@ -63,7 +63,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := database.DB.Exec(
-		`INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)`,
+		`INSERT INTO users (username, email, password_hash, email_verified) VALUES (?, ?, ?, 0)`,
 		email, email, string(hash),
 	)
 	if err != nil {
@@ -71,19 +71,35 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, _ := res.LastInsertId()
-	token, err := generateToken(id)
+	id, err := res.LastInsertId()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"token":    token,
-		"user_id":  id,
-		"username": email,
-		"email":    email,
-	})
+	cleanupExpiredVerificationTokens()
+
+	code, codeHash, err := newVerificationCode(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate verification code")
+		return
+	}
+
+	if _, err := database.DB.Exec(
+		`INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)`,
+		id, codeHash, time.Now().UTC().Add(ResetTokenTTL),
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create verification code")
+		return
+	}
+
+	go func(emailAddress, verifyCode string) {
+		if err := sendVerificationEmail(emailAddress, verifyCode); err != nil {
+			log.Printf("failed to send verification email to %s: %v", emailAddress, err)
+		}
+	}(email, code)
+
+	writeJSON(w, http.StatusCreated, map[string]string{"message": "verification code sent"})
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
@@ -96,9 +112,13 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, hash, storedEmail, storedUsername, found := lookupUserByIdentifier(req.Email)
+	id, hash, storedEmail, storedUsername, emailVerified, found := lookupUserByIdentifier(req.Email)
 	if !found {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if !emailVerified {
+		writeError(w, http.StatusForbidden, "email not verified")
 		return
 	}
 
@@ -129,36 +149,166 @@ func Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // lookupUserByIdentifier finds a user by email (primary) or username (legacy fallback).
-// Returns (id, passwordHash, email, username, found).
-func lookupUserByIdentifier(identifier string) (int64, string, sql.NullString, string, bool) {
+// Returns (id, passwordHash, email, username, emailVerified, found).
+func lookupUserByIdentifier(identifier string) (int64, string, sql.NullString, string, bool, bool) {
 	identifier = strings.TrimSpace(identifier)
 	var id int64
 	var hash string
 	var storedEmail sql.NullString
 	var storedUsername string
+	var emailVerifiedInt int
 
 	// Try email lookup first.
 	email, emailErr := normalizeEmail(identifier)
 	if emailErr == nil {
 		err := database.DB.QueryRow(
-			`SELECT id, email, username, password_hash FROM users WHERE lower(email) = lower(?)`, email,
-		).Scan(&id, &storedEmail, &storedUsername, &hash)
+			`SELECT id, email, username, password_hash, email_verified FROM users WHERE lower(email) = lower(?)`, email,
+		).Scan(&id, &storedEmail, &storedUsername, &hash, &emailVerifiedInt)
 		if err == nil {
-			return id, hash, storedEmail, storedUsername, true
+			return id, hash, storedEmail, storedUsername, emailVerifiedInt != 0, true
 		}
 		if err != sql.ErrNoRows {
-			return 0, "", sql.NullString{}, "", false
+			return 0, "", sql.NullString{}, "", false, false
 		}
 	}
 
 	// Fallback to username for legacy accounts.
 	err := database.DB.QueryRow(
-		`SELECT id, email, username, password_hash FROM users WHERE username = ?`, identifier,
-	).Scan(&id, &storedEmail, &storedUsername, &hash)
+		`SELECT id, email, username, password_hash, email_verified FROM users WHERE username = ?`, identifier,
+	).Scan(&id, &storedEmail, &storedUsername, &hash, &emailVerifiedInt)
 	if err != nil {
-		return 0, "", sql.NullString{}, "", false
+		return 0, "", sql.NullString{}, "", false, false
 	}
-	return id, hash, storedEmail, storedUsername, true
+	return id, hash, storedEmail, storedUsername, emailVerifiedInt != 0, true
+}
+
+func VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Code) == "" {
+		writeError(w, http.StatusBadRequest, "email and code required")
+		return
+	}
+
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "email and code required")
+		return
+	}
+
+	userID, err := lookupUserIDByEmail(email)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
+		return
+	}
+
+	tx, err := database.DB.Begin()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify email")
+		return
+	}
+	defer tx.Rollback()
+
+	tokenHash := hashVerificationCode(userID, req.Code)
+	var tokenID int64
+	err = tx.QueryRow(`
+		SELECT id
+		FROM email_verification_tokens
+		WHERE user_id = ?
+		  AND token_hash = ?
+		  AND used_at IS NULL
+		  AND expires_at > CURRENT_TIMESTAMP
+	`, userID, tokenHash).Scan(&tokenID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
+		return
+	}
+
+	if _, err := tx.Exec(`UPDATE users SET email_verified = 1 WHERE id = ?`, userID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify email")
+		return
+	}
+
+	if _, err := tx.Exec(`UPDATE email_verification_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?`, tokenID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify email")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify email")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "email verified"})
+}
+
+func ResendVerification(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Email) == "" {
+		writeError(w, http.StatusBadRequest, "email required")
+		return
+	}
+
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "email required")
+		return
+	}
+
+	if !allowResetFor(email, clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many requests, try again later")
+		return
+	}
+
+	cleanupExpiredVerificationTokens()
+
+	var userID int64
+	var emailVerifiedInt int
+	err = database.DB.QueryRow(`SELECT id, email_verified FROM users WHERE lower(email) = lower(?)`, email).Scan(&userID, &emailVerifiedInt)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("resend verification lookup failed: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a verification code has been sent."})
+		return
+	}
+
+	if emailVerifiedInt != 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a verification code has been sent."})
+		return
+	}
+
+	code, codeHash, err := newVerificationCode(userID)
+	if err != nil {
+		log.Printf("failed to generate verification code: %v", err)
+		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a verification code has been sent."})
+		return
+	}
+
+	if _, err := database.DB.Exec(`DELETE FROM email_verification_tokens WHERE user_id = ? AND used_at IS NULL`, userID); err != nil {
+		log.Printf("failed to clear previous verification codes: %v", err)
+	}
+
+	if _, err := database.DB.Exec(
+		`INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)`,
+		userID, codeHash, time.Now().UTC().Add(ResetTokenTTL),
+	); err != nil {
+		log.Printf("failed to store verification code: %v", err)
+		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a verification code has been sent."})
+		return
+	}
+
+	go func(emailAddress, verificationCode string) {
+		if err := sendVerificationEmail(emailAddress, verificationCode); err != nil {
+			log.Printf("failed to send verification email to %s: %v", emailAddress, err)
+		}
+	}(email, code)
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a verification code has been sent."})
 }
 
 func RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
@@ -357,8 +507,23 @@ func newResetCode(userID int64) (string, string, error) {
 	return code, hashResetCode(userID, code), nil
 }
 
+func newVerificationCode(userID int64) (string, string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(10000))
+	if err != nil {
+		return "", "", err
+	}
+	code := fmt.Sprintf("%04d", n.Int64())
+	return code, hashVerificationCode(userID, code), nil
+}
+
 func hashResetCode(userID int64, code string) string {
 	input := fmt.Sprintf("%d:%s", userID, strings.TrimSpace(code))
+	s := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(s[:])
+}
+
+func hashVerificationCode(userID int64, code string) string {
+	input := fmt.Sprintf("verify:%d:%s", userID, strings.TrimSpace(code))
 	s := sha256.Sum256([]byte(input))
 	return hex.EncodeToString(s[:])
 }
@@ -393,6 +558,12 @@ func lookupUserIDByEmail(email string) (int64, error) {
 	return userID, nil
 }
 
+func cleanupExpiredVerificationTokens() {
+	if _, err := database.DB.Exec(`DELETE FROM email_verification_tokens WHERE used_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP`); err != nil {
+		log.Printf("failed to cleanup verification tokens: %v", err)
+	}
+}
+
 func cleanupExpiredResetTokens() {
 	if _, err := database.DB.Exec(`DELETE FROM password_reset_tokens WHERE used_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP`); err != nil {
 		log.Printf("failed to cleanup reset tokens: %v", err)
@@ -420,6 +591,29 @@ func sendPasswordResetEmail(toEmail, rawCode string) error {
 		return sendMailImplicitTLS(addr, toEmail, msg)
 	}
 
+	return sendMailWithTimeout(addr, toEmail, msg, true)
+}
+
+func sendVerificationEmail(toEmail, rawCode string) error {
+	if SMTPHost == "" || SMTPPort == "" || SMTPFrom == "" {
+		log.Printf("SMTP not configured, verification code for %s: %s", toEmail, rawCode)
+		return nil
+	}
+
+	body := "Your IPTV Player verification code is: " + rawCode + "\n\n"
+	body += "Enter this 4-digit code in the app to activate your account.\n"
+	body += fmt.Sprintf("The code expires in %d minutes.\n", int(ResetTokenTTL.Minutes()))
+	body += "If you did not create this account, you can ignore this email.\n"
+
+	msg := []byte("Subject: IPTV Player email verification\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n" +
+		body)
+
+	addr := net.JoinHostPort(SMTPHost, SMTPPort)
+	if SMTPPort == "465" {
+		return sendMailImplicitTLS(addr, toEmail, msg)
+	}
 	return sendMailWithTimeout(addr, toEmail, msg, true)
 }
 

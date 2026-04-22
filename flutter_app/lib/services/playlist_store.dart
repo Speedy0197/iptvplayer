@@ -255,7 +255,11 @@ class PlaylistStore extends ChangeNotifier {
     epgSourceMissing = false;
     notifyListeners();
 
-    if (channel.epgChannelId.isEmpty) {
+    final effectiveEpgChannelId = channel.epgChannelId.isNotEmpty
+        ? channel.epgChannelId
+        : channel.streamId;
+
+    if (effectiveEpgChannelId.isEmpty) {
       epgSourceMissing = true;
       notifyListeners();
       return;
@@ -268,7 +272,7 @@ class PlaylistStore extends ChangeNotifier {
     try {
       epgEntries =
           (await api.get(
-                    '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(channel.epgChannelId)}',
+                    '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(effectiveEpgChannelId)}',
                   )
                   as List<dynamic>)
               .map((e) => EpgEntry.fromJson(e as Map<String, dynamic>))

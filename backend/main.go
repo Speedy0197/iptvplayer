@@ -52,6 +52,8 @@ func main() {
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public
 		r.Post("/auth/register", handlers.Register)
+		r.Post("/auth/verify-email", handlers.VerifyEmail)
+		r.Post("/auth/resend-verification", handlers.ResendVerification)
 		r.Post("/auth/login", handlers.Login)
 		r.Post("/auth/request-reset", handlers.RequestPasswordReset)
 		r.Post("/auth/verify-reset", handlers.VerifyResetToken)
