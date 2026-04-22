@@ -5,11 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/mail"
@@ -189,15 +189,19 @@ func RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 		if err != sql.ErrNoRows {
 			log.Printf("request reset lookup failed: %v", err)
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset link has been sent."})
+		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset code has been sent."})
 		return
 	}
 
-	rawToken, tokenHash, err := newResetToken()
+	rawCode, tokenHash, err := newResetCode(userID)
 	if err != nil {
-		log.Printf("failed to generate reset token: %v", err)
-		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset link has been sent."})
+		log.Printf("failed to generate reset code: %v", err)
+		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset code has been sent."})
 		return
+	}
+
+	if _, err := database.DB.Exec(`DELETE FROM password_reset_tokens WHERE user_id = ? AND used_at IS NULL`, userID); err != nil {
+		log.Printf("failed to clear previous reset codes: %v", err)
 	}
 
 	expiresAt := time.Now().UTC().Add(ResetTokenTTL)
@@ -206,31 +210,44 @@ func RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 		userID, tokenHash, expiresAt,
 	); err != nil {
 		log.Printf("failed to store reset token: %v", err)
-		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset link has been sent."})
+		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset code has been sent."})
 		return
 	}
 
-	go func(emailAddress, token string) {
-		if err := sendPasswordResetEmail(emailAddress, token); err != nil {
+	go func(emailAddress, code string) {
+		if err := sendPasswordResetEmail(emailAddress, code); err != nil {
 			log.Printf("failed to send reset email to %s: %v", emailAddress, err)
 		}
-	}(email, rawToken)
+	}(email, rawCode)
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset link has been sent."})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a reset code has been sent."})
 }
 
 func VerifyResetToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Token string `json:"token"`
+		Email string `json:"email"`
+		Code  string `json:"code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
-		writeError(w, http.StatusBadRequest, "token required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Code) == "" {
+		writeError(w, http.StatusBadRequest, "email and code required")
 		return
 	}
 
-	valid, err := isResetTokenValid(req.Token)
+	email, err := normalizeEmail(req.Email)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		writeError(w, http.StatusBadRequest, "email and code required")
+		return
+	}
+
+	userID, err := lookupUserIDByEmail(email)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
+		return
+	}
+
+	valid, err := isResetCodeValid(userID, req.Code)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
 		return
 	}
 
@@ -239,11 +256,18 @@ func VerifyResetToken(w http.ResponseWriter, r *http.Request) {
 
 func ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Token       string `json:"token"`
+		Email       string `json:"email"`
+		Code        string `json:"code"`
 		NewPassword string `json:"new_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" || req.NewPassword == "" {
-		writeError(w, http.StatusBadRequest, "token and new_password required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Code) == "" || req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "email, code and new_password required")
+		return
+	}
+
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "email, code and new_password required")
 		return
 	}
 
@@ -259,18 +283,24 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	tokenHash := hashResetToken(req.Token)
+	userID, err := lookupUserIDByEmail(email)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
+		return
+	}
+
+	tokenHash := hashResetCode(userID, req.Code)
 	var tokenID int64
-	var userID int64
 	err = tx.QueryRow(`
-		SELECT id, user_id
+		SELECT id
 		FROM password_reset_tokens
-		WHERE token_hash = ?
+		WHERE user_id = ?
+		  AND token_hash = ?
 		  AND used_at IS NULL
 		  AND expires_at > CURRENT_TIMESTAMP
-	`, tokenHash).Scan(&tokenID, &userID)
+	`, userID, tokenHash).Scan(&tokenID)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
 		return
 	}
 
@@ -318,31 +348,33 @@ func normalizeEmail(v string) (string, error) {
 	return email, nil
 }
 
-func newResetToken() (string, string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+func newResetCode(userID int64) (string, string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(10000))
+	if err != nil {
 		return "", "", err
 	}
-	raw := base64.RawURLEncoding.EncodeToString(b)
-	return raw, hashResetToken(raw), nil
+	code := fmt.Sprintf("%04d", n.Int64())
+	return code, hashResetCode(userID, code), nil
 }
 
-func hashResetToken(token string) string {
-	s := sha256.Sum256([]byte(strings.TrimSpace(token)))
+func hashResetCode(userID int64, code string) string {
+	input := fmt.Sprintf("%d:%s", userID, strings.TrimSpace(code))
+	s := sha256.Sum256([]byte(input))
 	return hex.EncodeToString(s[:])
 }
 
-func isResetTokenValid(token string) (bool, error) {
-	tokenHash := hashResetToken(token)
+func isResetCodeValid(userID int64, code string) (bool, error) {
+	tokenHash := hashResetCode(userID, code)
 	var id int64
 	err := database.DB.QueryRow(`
 		SELECT id
 		FROM password_reset_tokens
-		WHERE token_hash = ?
+		WHERE user_id = ?
+		  AND token_hash = ?
 		  AND used_at IS NULL
 		  AND expires_at > CURRENT_TIMESTAMP
 		LIMIT 1
-	`, tokenHash).Scan(&id)
+	`, userID, tokenHash).Scan(&id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return false, err
@@ -352,28 +384,30 @@ func isResetTokenValid(token string) (bool, error) {
 	return id > 0, nil
 }
 
+func lookupUserIDByEmail(email string) (int64, error) {
+	var userID int64
+	err := database.DB.QueryRow(`SELECT id FROM users WHERE lower(email) = lower(?)`, email).Scan(&userID)
+	if err != nil {
+		return 0, err
+	}
+	return userID, nil
+}
+
 func cleanupExpiredResetTokens() {
 	if _, err := database.DB.Exec(`DELETE FROM password_reset_tokens WHERE used_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP`); err != nil {
 		log.Printf("failed to cleanup reset tokens: %v", err)
 	}
 }
 
-func sendPasswordResetEmail(toEmail, rawToken string) error {
+func sendPasswordResetEmail(toEmail, rawCode string) error {
 	if SMTPHost == "" || SMTPPort == "" || SMTPFrom == "" {
-		log.Printf("SMTP not configured, reset token for %s: %s", toEmail, rawToken)
+		log.Printf("SMTP not configured, reset code for %s: %s", toEmail, rawCode)
 		return nil
 	}
 
-	resetLink := strings.TrimRight(ResetLinkBase, "/")
-	if resetLink != "" {
-		resetLink = fmt.Sprintf("%s/reset-password?token=%s", resetLink, rawToken)
-	}
-
-	body := "Use this token to reset your password: " + rawToken + "\n\n"
-	if resetLink != "" {
-		body += "Open this link in the app: " + resetLink + "\n\n"
-	}
-	body += fmt.Sprintf("This token expires in %d minutes. If you did not request this, you can ignore this email.\n", int(ResetTokenTTL.Minutes()))
+	body := "Your IPTV Player reset code is: " + rawCode + "\n\n"
+	body += fmt.Sprintf("Enter this 4-digit code in the app. The code expires in %d minutes.\n", int(ResetTokenTTL.Minutes()))
+	body += "If you did not request this, you can ignore this email.\n"
 
 	msg := []byte("Subject: IPTV Player password reset\r\n" +
 		"MIME-Version: 1.0\r\n" +

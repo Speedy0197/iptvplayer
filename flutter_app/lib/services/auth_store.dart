@@ -99,13 +99,18 @@ class AuthStore extends ChangeNotifier {
     await api.post('/auth/request-reset', {'email': email});
   }
 
-  Future<void> verifyResetToken(String token) async {
-    await api.post('/auth/verify-reset', {'token': token});
+  Future<void> verifyResetToken(String email, String code) async {
+    await api.post('/auth/verify-reset', {'email': email, 'code': code});
   }
 
-  Future<void> resetPassword(String token, String newPassword) async {
+  Future<void> resetPassword(
+    String email,
+    String code,
+    String newPassword,
+  ) async {
     await api.post('/auth/reset-password', {
-      'token': token,
+      'email': email,
+      'code': code,
       'new_password': newPassword,
     });
   }

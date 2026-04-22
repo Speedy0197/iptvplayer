@@ -53,7 +53,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       }
       setState(() {
         _requestMessage =
-            'If an account exists for this email, a reset token has been sent.';
+            'If an account exists for this email, a 4-digit reset code has been sent.';
       });
     } on ApiException catch (e) {
       if (!mounted) {
@@ -89,9 +89,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     });
 
     final auth = context.read<AuthStore>();
+    final email = _emailCtrl.text.trim();
+    final code = _tokenCtrl.text.trim();
     try {
-      await auth.verifyResetToken(_tokenCtrl.text.trim());
-      await auth.resetPassword(_tokenCtrl.text.trim(), _newPasswordCtrl.text);
+      await auth.verifyResetToken(email, code);
+      await auth.resetPassword(email, code, _newPasswordCtrl.text);
       if (!mounted) {
         return;
       }
@@ -143,7 +145,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           const Text(
-                            'Step 1: Request reset token',
+                            'Step 1: Request reset code',
                             style: TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 16,
@@ -210,13 +212,18 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           TextFormField(
                             controller: _tokenCtrl,
                             decoration: const InputDecoration(
-                              labelText: 'Reset token',
+                              labelText: '4-digit reset code',
                               prefixIcon: Icon(Icons.key_outlined),
                             ),
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                ? 'Required'
-                                : null,
+                            keyboardType: TextInputType.number,
+                            validator: (value) {
+                              final v = (value ?? '').trim();
+                              final is4Digits = RegExp(r'^\d{4}$').hasMatch(v);
+                              if (!is4Digits) {
+                                return 'Enter the 4-digit code';
+                              }
+                              return null;
+                            },
                           ),
                           const SizedBox(height: 12),
                           TextFormField(
