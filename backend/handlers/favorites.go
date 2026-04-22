@@ -36,9 +36,7 @@ func ListFavoriteChannels(w http.ResponseWriter, r *http.Request) {
 	channels := []models.Channel{}
 	for rows.Next() {
 		var c models.Channel
-		if err := rows.Scan(&c.ID, &c.PlaylistID, &c.StreamID, &c.Name,
-			&c.GroupName, &c.StreamURL, &c.LogoURL, &c.EpgChannelID,
-			&c.SortOrder, &c.IsFavorite); err != nil {
+		if err := database.ScanChannel(rows, &c); err != nil {
 			continue
 		}
 		channels = append(channels, c)
