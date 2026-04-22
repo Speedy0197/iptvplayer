@@ -1269,13 +1269,18 @@ class _HomeScreenState extends State<HomeScreen> {
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (store.nowPlaying != null)
-                  _CompactMiniPlayerBar(
-                    channel: store.nowPlaying!,
-                    iosCompact: isSmallCompact,
-                    onTap: () => _openCompactPlayer(store),
-                    onStop: store.stopPlayback,
-                  ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 150),
+                  alignment: Alignment.topCenter,
+                  child: store.nowPlaying != null
+                      ? _CompactMiniPlayerBar(
+                          channel: store.nowPlaying!,
+                          iosCompact: isSmallCompact,
+                          onTap: () => _openCompactPlayer(store),
+                          onStop: store.stopPlayback,
+                        )
+                      : const SizedBox.shrink(),
+                ),
                 MediaQuery.removeViewPadding(
                   context: context,
                   removeBottom: true,

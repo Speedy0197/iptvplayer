@@ -14,7 +14,8 @@ class ChannelPlayer extends StatefulWidget {
   State<ChannelPlayer> createState() => _ChannelPlayerState();
 }
 
-class _ChannelPlayerState extends State<ChannelPlayer> {
+class _ChannelPlayerState extends State<ChannelPlayer>
+    with WidgetsBindingObserver {
   static const int _maxRetries = 2;
   static const Duration _startupTimeout = Duration(seconds: 12);
 
@@ -30,9 +31,22 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
   int _attempt = 0;
   bool _loading = true;
   String? _error;
+  bool _lastObservedPlaying = false;
+  bool _inFullscreen = false;
+  AppLifecycleState? _lifecycleState;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+  }
 
   Future<void> _toggleNativeFullscreen({required bool entering}) async {
-    final wasPlaying = _player.state.playing;
+    _inFullscreen = entering;
+
+    final shouldResume =
+        _player.state.playing ||
+        _lastObservedPlaying ||
+        (Platform.isIOS && entering);
 
     if (entering) {
       await defaultEnterNativeFullscreen();
@@ -40,52 +54,49 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
       await defaultExitNativeFullscreen();
     }
 
-    _ensurePlaybackAfterFullscreenTransition(wasPlaying: wasPlaying);
+    _refreshVideoOutputAfterTransition(shouldResume: shouldResume);
   }
 
-  void _ensurePlaybackAfterFullscreenTransition({required bool wasPlaying}) {
+  void _refreshVideoOutputAfterTransition({required bool shouldResume}) {
     _fullscreenResumeTimer?.cancel();
-    if (!wasPlaying || !mounted) return;
+    if (!mounted) return;
 
-    // On iOS the AVPlayer session is interrupted during the native fullscreen
-    // transition and playback stops only after the transition completes.
-    // Wait for the transition to settle before starting the resume loop.
-    final initialDelay =
-        Platform.isIOS ? const Duration(milliseconds: 600) : Duration.zero;
-
-    var attempts = 0;
-    _fullscreenResumeTimer = Timer(initialDelay, () {
-      if (!mounted) return;
-      _fullscreenResumeTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
-      (timer) async {
-        attempts += 1;
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-
-        if (_player.state.playing) {
-          timer.cancel();
-          return;
-        }
-
-        try {
-          await _player.play();
-        } catch (_) {
-          // Ignore transient transition errors while fullscreen route settles.
-        }
-
-        if (_player.state.playing || attempts >= 8) {
-          timer.cancel();
-        }
+    if (!Platform.isIOS) {
+      _fullscreenResumeTimer = Timer(const Duration(milliseconds: 400), () {
+        if (!mounted || _player.state.playing) return;
+        _player.play();
       });
+      return;
+    }
+
+    // iOS: the player state reports playing=true throughout the fullscreen
+    // transition, but the video appears frozen because media_kit_video's
+    // fullscreen route attaches a new rendering surface and the decoder has
+    // not yet flushed a frame to it.
+    //
+    // Seeking to the current position forces the decoder to deliver a fresh
+    // frame to the new surface, unfreezing the video. We wait 400 ms to give
+    // the route animation time to attach the surface before seeking.
+    _fullscreenResumeTimer = Timer(const Duration(milliseconds: 400), () async {
+      if (!mounted) return;
+
+      final pos = _player.state.position;
+      try {
+        await _player.seek(pos);
+      } catch (_) {
+        // Ignore transient seek failures during fullscreen transition.
+      }
+
+      if (mounted && shouldResume && !_player.state.playing) {
+        await _player.play();
+      }
     });
   }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _player = Player(
       configuration: const PlayerConfiguration(
         title: 'StreamPilot',
@@ -96,7 +107,20 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
     _controller = VideoController(_player);
 
     _playingSub = _player.stream.playing.listen((playing) {
+      _lastObservedPlaying = playing;
       if (!mounted) return;
+
+      // While in fullscreen on iOS, the inner Video widget created by
+      // media_kit_video's fullscreen route can pause the player on any
+      // lifecycle transition. Only honour a pause when truly backgrounded.
+      if (!playing &&
+          Platform.isIOS &&
+          _inFullscreen &&
+          _lifecycleState != AppLifecycleState.paused) {
+        _player.play();
+        return;
+      }
+
       if (playing) {
         _startupTimer?.cancel();
         setState(() {
@@ -179,6 +203,7 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fullscreenResumeTimer?.cancel();
     _startupTimer?.cancel();
     _playingSub?.cancel();
@@ -243,7 +268,7 @@ class _ChannelPlayerState extends State<ChannelPlayer> {
       controller: _controller,
       controls: AdaptiveVideoControls,
       fit: BoxFit.contain,
-      pauseUponEnteringBackgroundMode: true,
+      pauseUponEnteringBackgroundMode: !Platform.isIOS,
       resumeUponEnteringForegroundMode: true,
       onEnterFullscreen: () => _toggleNativeFullscreen(entering: true),
       onExitFullscreen: () => _toggleNativeFullscreen(entering: false),
