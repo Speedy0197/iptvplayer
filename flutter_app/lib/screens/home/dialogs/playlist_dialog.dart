@@ -1,0 +1,380 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../models/models.dart';
+import '../../../services/api_client.dart';
+import '../../../services/playlist_store.dart';
+
+Future<void> showPlaylistDialog(
+  BuildContext context, {
+  Playlist? editing,
+}) async {
+  final nameCtrl = TextEditingController(text: editing?.name ?? '');
+  final m3uUrlCtrl = TextEditingController(text: editing?.m3uUrl ?? '');
+  final xtreamServerCtrl = TextEditingController(
+    text: editing?.xtreamServer ?? '',
+  );
+  final xtreamUserCtrl = TextEditingController(
+    text: editing?.xtreamUsername ?? '',
+  );
+  final xtreamPassCtrl = TextEditingController();
+  final vuplusIpCtrl = TextEditingController(text: editing?.vuplusIp ?? '');
+  final vuplusPortCtrl = TextEditingController(
+    text: editing?.vuplusPort ?? '80',
+  );
+
+  var selectedType = editing?.type ?? 'xtream';
+  var m3uSource = editing?.type == 'm3u' && ((editing?.m3uUrl ?? '').isEmpty)
+      ? 'file'
+      : 'url';
+  String? m3uContent;
+  String? m3uFileName;
+  String? error;
+  var submitting = false;
+  String? successMessage;
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      return StatefulBuilder(
+        builder: (ctx, setState) {
+          final dialogWidth = MediaQuery.sizeOf(ctx).width;
+          return AlertDialog(
+            title: Text(editing == null ? 'Add playlist' : 'Edit playlist'),
+            content: SizedBox(
+              width: dialogWidth > 640 ? 520 : dialogWidth - 64,
+              height: 340,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SegmentedButton<String>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(value: 'xtream', label: Text('Xtream')),
+                      ButtonSegment(value: 'vuplus', label: Text('VU+')),
+                      ButtonSegment(value: 'm3u', label: Text('M3U')),
+                    ],
+                    selected: {selectedType},
+                    onSelectionChanged: editing != null
+                        ? null
+                        : (next) {
+                            setState(() {
+                              selectedType = next.first;
+                              error = null;
+                            });
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(labelText: 'Name'),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (selectedType == 'm3u')
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              SegmentedButton<String>(
+                                showSelectedIcon: false,
+                                segments: const [
+                                  ButtonSegment(
+                                    value: 'url',
+                                    label: Text('URL'),
+                                  ),
+                                  ButtonSegment(
+                                    value: 'file',
+                                    label: Text('File Upload'),
+                                  ),
+                                ],
+                                selected: {m3uSource},
+                                onSelectionChanged: (next) {
+                                  setState(() {
+                                    m3uSource = next.first;
+                                    error = null;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              if (m3uSource == 'url')
+                                TextField(
+                                  controller: m3uUrlCtrl,
+                                  decoration: const InputDecoration(
+                                    labelText: 'M3U URL',
+                                  ),
+                                )
+                              else ...[
+                                OutlinedButton.icon(
+                                  onPressed: () async {
+                                    final result = await FilePicker.platform
+                                        .pickFiles(
+                                          type: FileType.custom,
+                                          allowedExtensions: const [
+                                            'm3u',
+                                            'm3u8',
+                                            'txt',
+                                          ],
+                                          withData: true,
+                                        );
+                                    if (result == null ||
+                                        result.files.isEmpty) {
+                                      return;
+                                    }
+
+                                    final pickedFile = result.files.first;
+                                    final bytes = pickedFile.bytes;
+                                    if (bytes == null || bytes.isEmpty) {
+                                      setState(() {
+                                        error =
+                                            'Could not read the selected M3U file';
+                                      });
+                                      return;
+                                    }
+
+                                    setState(() {
+                                      m3uContent = utf8.decode(
+                                        bytes,
+                                        allowMalformed: true,
+                                      );
+                                      m3uFileName = pickedFile.name;
+                                      error = null;
+                                    });
+                                  },
+                                  icon: const Icon(Icons.upload_file),
+                                  label: Text(
+                                    m3uFileName == null
+                                        ? 'Choose M3U File'
+                                        : 'Replace File',
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.outlineVariant,
+                                    ),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    m3uFileName ??
+                                        'No file selected. Upload an M3U file from this device.',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyMedium,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          )
+                        else if (selectedType == 'xtream') ...[
+                          TextField(
+                            controller: xtreamServerCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Xtream server URL',
+                              hintText: 'http://provider.example.com:8080',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: xtreamUserCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Xtream username',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: xtreamPassCtrl,
+                            decoration: InputDecoration(
+                              labelText: editing == null
+                                  ? 'Xtream password'
+                                  : 'Xtream password (optional)',
+                            ),
+                            obscureText: true,
+                          ),
+                        ] else ...[
+                          TextField(
+                            controller: vuplusIpCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'VU+ IP / host',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: vuplusPortCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'VU+ port',
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    height: 30,
+                    child: error == null
+                        ? null
+                        : Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              error!,
+                              style: const TextStyle(color: Colors.redAccent),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: submitting
+                    ? null
+                    : () async {
+                        setState(() {
+                          submitting = true;
+                          error = null;
+                        });
+
+                        try {
+                          final store = context.read<PlaylistStore>();
+                          final name = nameCtrl.text.trim();
+                          if (name.isEmpty) {
+                            throw const ApiException('Name is required');
+                          }
+
+                          if (selectedType == 'm3u') {
+                            if (m3uSource == 'url' &&
+                                m3uUrlCtrl.text.trim().isEmpty) {
+                              throw const ApiException('M3U URL is required');
+                            }
+                            if (m3uSource == 'file' &&
+                                (m3uContent == null ||
+                                    m3uContent!.trim().isEmpty)) {
+                              throw const ApiException(
+                                'Please choose an M3U file',
+                              );
+                            }
+                          }
+
+                          if (editing == null) {
+                            if (selectedType == 'm3u') {
+                              await store.createM3uPlaylist(
+                                name: name,
+                                m3uUrl: m3uSource == 'url'
+                                    ? m3uUrlCtrl.text.trim()
+                                    : null,
+                                m3uContent: m3uSource == 'file'
+                                    ? m3uContent
+                                    : null,
+                              );
+                            } else if (selectedType == 'xtream') {
+                              await store.createXtreamPlaylist(
+                                name: name,
+                                server: xtreamServerCtrl.text.trim(),
+                                username: xtreamUserCtrl.text.trim(),
+                                password: xtreamPassCtrl.text,
+                              );
+                            } else {
+                              await store.createVuplusPlaylist(
+                                name: name,
+                                ip: vuplusIpCtrl.text.trim(),
+                                port: vuplusPortCtrl.text.trim().isEmpty
+                                    ? '80'
+                                    : vuplusPortCtrl.text.trim(),
+                              );
+                            }
+                          } else {
+                            await store.updatePlaylist(
+                              id: editing.id,
+                              type: selectedType,
+                              name: name,
+                              m3uUrl:
+                                  selectedType == 'm3u' && m3uSource == 'url'
+                                  ? m3uUrlCtrl.text.trim()
+                                  : null,
+                              m3uContent:
+                                  selectedType == 'm3u' && m3uSource == 'file'
+                                  ? m3uContent
+                                  : null,
+                              xtreamServer: xtreamServerCtrl.text.trim(),
+                              xtreamUsername: xtreamUserCtrl.text.trim(),
+                              xtreamPassword: xtreamPassCtrl.text,
+                              vuplusIp: vuplusIpCtrl.text.trim(),
+                              vuplusPort: vuplusPortCtrl.text.trim(),
+                            );
+                          }
+
+                          if (!ctx.mounted) return;
+                          successMessage = editing == null
+                              ? 'Playlist created'
+                              : 'Playlist updated';
+                          Navigator.of(ctx).pop();
+                        } on ApiException catch (e) {
+                          setState(() => error = e.message);
+                        } catch (_) {
+                          setState(() => error = 'Could not save playlist');
+                        } finally {
+                          if (ctx.mounted && successMessage == null) {
+                            setState(() => submitting = false);
+                          }
+                        }
+                      },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (submitting) ...[
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Text(
+                      submitting
+                          ? (editing == null ? 'Creating...' : 'Saving...')
+                          : (editing == null ? 'Create' : 'Save'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  if (successMessage != null && context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(successMessage!)));
+  }
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    nameCtrl.dispose();
+    m3uUrlCtrl.dispose();
+    xtreamServerCtrl.dispose();
+    xtreamUserCtrl.dispose();
+    xtreamPassCtrl.dispose();
+    vuplusIpCtrl.dispose();
+    vuplusPortCtrl.dispose();
+  });
+}
