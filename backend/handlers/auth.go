@@ -276,18 +276,18 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, err := lookupUserIDByEmail(email)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
+		return
+	}
+
 	tx, err := database.DB.Begin()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reset password")
 		return
 	}
 	defer tx.Rollback()
-
-	userID, err := lookupUserIDByEmail(email)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or expired code")
-		return
-	}
 
 	tokenHash := hashResetCode(userID, req.Code)
 	var tokenID int64
