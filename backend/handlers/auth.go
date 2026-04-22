@@ -278,8 +278,7 @@ func ResendVerification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if emailVerifiedInt != 0 {
-		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a verification code has been sent."})
-		return
+		log.Printf("resend verification requested for already verified email: %s", email)
 	}
 
 	code, codeHash, err := newVerificationCode(userID)
@@ -301,6 +300,8 @@ func ResendVerification(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"message": "If the email exists, a verification code has been sent."})
 		return
 	}
+
+	log.Printf("queued verification resend email to %s", email)
 
 	go func(emailAddress, verificationCode string) {
 		if err := sendVerificationEmail(emailAddress, verificationCode); err != nil {

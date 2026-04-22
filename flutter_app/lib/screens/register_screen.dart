@@ -5,7 +5,14 @@ import '../services/api_client.dart';
 import '../services/auth_store.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({
+    super.key,
+    this.initialEmail,
+    this.startInVerification = false,
+  });
+
+  final String? initialEmail;
+  final bool startInVerification;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -22,6 +29,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _error;
   String? _info;
   bool _awaitingVerification = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _awaitingVerification = widget.startInVerification;
+    if ((widget.initialEmail ?? '').trim().isNotEmpty) {
+      _emailCtrl.text = widget.initialEmail!.trim();
+    }
+  }
 
   @override
   void dispose() {

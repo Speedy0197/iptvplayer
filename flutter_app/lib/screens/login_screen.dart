@@ -19,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordCtrl = TextEditingController();
 
   String? _error;
+  bool _showVerifyAction = false;
 
   @override
   void dispose() {
@@ -31,13 +32,23 @@ class _LoginScreenState extends State<LoginScreen> {
     final auth = context.read<AuthStore>();
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _showVerifyAction = false;
+    });
     try {
       await auth.login(_emailCtrl.text.trim(), _passwordCtrl.text);
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      final msg = e.message;
+      setState(() {
+        _error = msg;
+        _showVerifyAction = msg.toLowerCase().contains('email not verified');
+      });
     } catch (_) {
-      setState(() => _error = 'Login failed');
+      setState(() {
+        _error = 'Login failed';
+        _showVerifyAction = false;
+      });
     }
   }
 
@@ -151,6 +162,30 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                     ),
                                   ),
+                                  if (_showVerifyAction) ...[
+                                    const SizedBox(height: 8),
+                                    TextButton(
+                                      onPressed: auth.busy
+                                          ? null
+                                          : () {
+                                              Navigator.of(context).push(
+                                                MaterialPageRoute<void>(
+                                                  builder: (_) =>
+                                                      RegisterScreen(
+                                                        initialEmail: _emailCtrl
+                                                            .text
+                                                            .trim(),
+                                                        startInVerification:
+                                                            true,
+                                                      ),
+                                                ),
+                                              );
+                                            },
+                                      child: const Text(
+                                        'Enter verification code',
+                                      ),
+                                    ),
+                                  ],
                                 ],
                                 const SizedBox(height: 18),
                                 FilledButton(
