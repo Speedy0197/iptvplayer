@@ -2,44 +2,11 @@ import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
 import 'api_client.dart';
+import 'channel_sort.dart';
+import 'playlist_search.dart';
 
-enum SearchResultType { channel, group }
-
-enum ChannelSortOrder { byName, byIndex }
-
-class SearchResultItem {
-  final SearchResultType type;
-  final String title;
-  final String subtitle;
-  final Channel? channel;
-  final Group? group;
-
-  const SearchResultItem._({
-    required this.type,
-    required this.title,
-    required this.subtitle,
-    this.channel,
-    this.group,
-  });
-
-  factory SearchResultItem.channel(Channel c) {
-    return SearchResultItem._(
-      type: SearchResultType.channel,
-      title: c.name,
-      subtitle: c.groupName,
-      channel: c,
-    );
-  }
-
-  factory SearchResultItem.group(Group g) {
-    return SearchResultItem._(
-      type: SearchResultType.group,
-      title: g.name,
-      subtitle: '${g.channelCount} channels',
-      group: g,
-    );
-  }
-}
+export 'channel_sort.dart' show ChannelSortOrder;
+export 'playlist_search.dart' show SearchResultItem, SearchResultType;
 
 class PlaylistStore extends ChangeNotifier {
   final ApiClient api;
@@ -71,49 +38,34 @@ class PlaylistStore extends ChangeNotifier {
   final Set<int> _refreshingPlaylistIds = <int>{};
   ChannelSortOrder channelSortOrder = ChannelSortOrder.byIndex;
 
+  bool isRefreshingPlaylist(int id) => _refreshingPlaylistIds.contains(id);
+
+  bool get hasActiveSearch => searchQuery.trim().isNotEmpty;
+
+  // --- Derived list getters ---
+
+  List<Group> get filteredGroups => filterGroups(groups, searchQuery);
+
+  List<Group> get globalFilteredGroups {
+    if (!hasActiveSearch) return const [];
+    return filterGroups(_globalGroups, searchQuery);
+  }
+
+  List<Channel> get filteredChannels =>
+      filterChannels(channels, searchQuery, channelSortOrder);
+
+  List<Channel> get globalFilteredChannels {
+    if (!hasActiveSearch) return const [];
+    return filterChannels(_globalChannels, searchQuery, channelSortOrder);
+  }
+
+  // --- Favorite group helpers ---
+
   String _favoriteGroupDeletePath(int playlistId, String groupName) {
     final query = Uri(
       queryParameters: {'playlist_id': '$playlistId', 'group_name': groupName},
     ).query;
     return '/favorites/groups?$query';
-  }
-
-  bool isRefreshingPlaylist(int id) => _refreshingPlaylistIds.contains(id);
-
-  int _compareGroups(Group a, Group b) {
-    if (a.isFavorite != b.isFavorite) {
-      return a.isFavorite ? -1 : 1;
-    }
-    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-  }
-
-  int _compareChannels(Channel a, Channel b) {
-    if (a.isFavorite != b.isFavorite) {
-      return a.isFavorite ? -1 : 1;
-    }
-
-    switch (channelSortOrder) {
-      case ChannelSortOrder.byIndex:
-        final sortComparison = (a.sortOrder ?? 0).compareTo(b.sortOrder ?? 0);
-        if (sortComparison != 0) {
-          return sortComparison;
-        }
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      case ChannelSortOrder.byName:
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    }
-  }
-
-  List<Group> _sortedGroups(Iterable<Group> values) {
-    final list = values.toList();
-    list.sort(_compareGroups);
-    return list;
-  }
-
-  List<Channel> _sortedChannels(Iterable<Channel> values) {
-    final list = values.toList();
-    list.sort(_compareChannels);
-    return list;
   }
 
   String _favoriteGroupKey(int playlistId, String groupName) {
@@ -132,8 +84,8 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   void _reconcileFavoriteFlags() {
-    groups = _sortedGroups(_mergeFavoriteFlagsIntoGroups(groups));
-    _globalGroups = _sortedGroups(_mergeFavoriteFlagsIntoGroups(_globalGroups));
+    groups = sortGroups(_mergeFavoriteFlagsIntoGroups(groups));
+    _globalGroups = sortGroups(_mergeFavoriteFlagsIntoGroups(_globalGroups));
   }
 
   bool isGroupFavorite(int playlistId, String groupName) {
@@ -143,52 +95,10 @@ class PlaylistStore extends ChangeNotifier {
         .contains(key);
   }
 
-  bool get hasActiveSearch => searchQuery.trim().isNotEmpty;
-
-  String get _normalizedQuery => searchQuery.trim().toLowerCase();
-
-  List<Group> get filteredGroups {
-    if (!hasActiveSearch) return groups;
-    final q = _normalizedQuery;
-    return _sortedGroups(groups.where((g) => g.name.toLowerCase().contains(q)));
-  }
-
-  List<Group> get globalFilteredGroups {
-    if (!hasActiveSearch) return const [];
-    final q = _normalizedQuery;
-    return _sortedGroups(
-      _globalGroups.where((g) => g.name.toLowerCase().contains(q)),
-    );
-  }
-
-  List<Channel> get filteredChannels {
-    if (!hasActiveSearch) return channels;
-    final q = _normalizedQuery;
-    return _sortedChannels(
-      channels.where(
-        (c) =>
-            c.name.toLowerCase().contains(q) ||
-            c.groupName.toLowerCase().contains(q),
-      ),
-    );
-  }
-
-  List<Channel> get globalFilteredChannels {
-    if (!hasActiveSearch) return const [];
-    final q = _normalizedQuery;
-    return _sortedChannels(
-      _globalChannels.where(
-        (c) =>
-            c.name.toLowerCase().contains(q) ||
-            c.groupName.toLowerCase().contains(q),
-      ),
-    );
-  }
+  // --- Data fetching ---
 
   Future<void> ensureGlobalSearchData() async {
-    if (loadingGlobalSearch) {
-      return;
-    }
+    if (loadingGlobalSearch) return;
 
     if (playlists.isEmpty) {
       await fetchPlaylists();
@@ -216,25 +126,25 @@ class PlaylistStore extends ChangeNotifier {
       }
 
       final seenGroups = <String>{};
-      _globalGroups = _sortedGroups(
-        allGroups.where((g) {
-          final key = '${g.playlistId}:${g.name.toLowerCase()}';
-          if (seenGroups.contains(key)) return false;
-          seenGroups.add(key);
-          return true;
-        }),
-      );
-      _globalGroups = _sortedGroups(
-        _mergeFavoriteFlagsIntoGroups(_globalGroups),
+      _globalGroups = sortGroups(
+        _mergeFavoriteFlagsIntoGroups(
+          allGroups.where((g) {
+            final key = '${g.playlistId}:${g.name.toLowerCase()}';
+            if (seenGroups.contains(key)) return false;
+            seenGroups.add(key);
+            return true;
+          }),
+        ),
       );
 
       final seenChannels = <int>{};
-      _globalChannels = _sortedChannels(
+      _globalChannels = sortChannels(
         allChannels.where((c) {
           if (seenChannels.contains(c.id)) return false;
           seenChannels.add(c.id);
           return true;
         }),
+        channelSortOrder,
       );
     } finally {
       loadingGlobalSearch = false;
@@ -294,7 +204,7 @@ class PlaylistStore extends ChangeNotifier {
     loadingGroups = true;
     notifyListeners();
     try {
-      groups = _sortedGroups(
+      groups = sortGroups(
         _mergeFavoriteFlagsIntoGroups(
           (await api.get('/playlists/$playlistId/groups') as List<dynamic>).map(
             (e) => Group.fromJson(e as Map<String, dynamic>),
@@ -325,10 +235,11 @@ class PlaylistStore extends ChangeNotifier {
       final query = params.isEmpty
           ? ''
           : '?${Uri(queryParameters: params).query}';
-      channels = _sortedChannels(
+      channels = sortChannels(
         (await api.get('/playlists/$playlistId/channels$query')
                 as List<dynamic>)
             .map((e) => Channel.fromJson(e as Map<String, dynamic>)),
+        channelSortOrder,
       );
     } finally {
       loadingChannels = false;
@@ -409,6 +320,8 @@ class PlaylistStore extends ChangeNotifier {
     }
   }
 
+  // --- Favorites ---
+
   Future<void> toggleFavorite(Channel channel) async {
     if (channel.isFavorite) {
       await api.delete('/favorites/channels/${channel.id}');
@@ -418,16 +331,18 @@ class PlaylistStore extends ChangeNotifier {
 
     final nextIsFavorite = !channel.isFavorite;
 
-    channels = _sortedChannels(
+    channels = sortChannels(
       channels.map(
         (c) => c.id == channel.id ? c.copyWith(isFavorite: nextIsFavorite) : c,
       ),
+      channelSortOrder,
     );
 
-    _globalChannels = _sortedChannels(
+    _globalChannels = sortChannels(
       _globalChannels.map(
         (c) => c.id == channel.id ? c.copyWith(isFavorite: nextIsFavorite) : c,
       ),
+      channelSortOrder,
     );
 
     if (nowPlaying?.id == channel.id) {
@@ -436,18 +351,16 @@ class PlaylistStore extends ChangeNotifier {
 
     if (nextIsFavorite) {
       if (!favoriteChannels.any((c) => c.id == channel.id)) {
-        favoriteChannels = [
-          channel.copyWith(isFavorite: true),
-          ...favoriteChannels,
-        ];
+        favoriteChannels = sortChannels(
+          [channel.copyWith(isFavorite: true), ...favoriteChannels],
+          channelSortOrder,
+        );
       }
     } else {
       favoriteChannels = favoriteChannels
           .where((c) => c.id != channel.id)
           .toList();
     }
-
-    favoriteChannels = _sortedChannels(favoriteChannels);
 
     notifyListeners();
   }
@@ -541,7 +454,7 @@ class PlaylistStore extends ChangeNotifier {
 
     final nextIsFavorite = !currentlyFavorite;
 
-    groups = _sortedGroups(
+    groups = sortGroups(
       groups.map(
         (g) =>
             affectedPlaylistIds.contains(g.playlistId) &&
@@ -551,7 +464,7 @@ class PlaylistStore extends ChangeNotifier {
       ),
     );
 
-    _globalGroups = _sortedGroups(
+    _globalGroups = sortGroups(
       _globalGroups.map(
         (g) =>
             affectedPlaylistIds.contains(g.playlistId) &&
@@ -567,7 +480,7 @@ class PlaylistStore extends ChangeNotifier {
             g.playlistId == playlistId &&
             g.name.trim().toLowerCase() == normalizedGroupName,
       )) {
-        favoriteGroups = _sortedGroups([
+        favoriteGroups = sortGroups([
           Group(
             name: groupName,
             playlistId: playlistId,
@@ -578,7 +491,7 @@ class PlaylistStore extends ChangeNotifier {
         ]);
       }
     } else {
-      favoriteGroups = _sortedGroups(
+      favoriteGroups = sortGroups(
         favoriteGroups.where(
           (g) =>
               !(affectedPlaylistIds.contains(g.playlistId) &&
@@ -598,10 +511,9 @@ class PlaylistStore extends ChangeNotifier {
         ? ChannelSortOrder.byIndex
         : ChannelSortOrder.byName;
 
-    // Re-sort channels with the new sort order
-    channels = _sortedChannels(channels);
-    _globalChannels = _sortedChannels(_globalChannels);
-    favoriteChannels = _sortedChannels(favoriteChannels);
+    channels = sortChannels(channels, channelSortOrder);
+    _globalChannels = sortChannels(_globalChannels, channelSortOrder);
+    favoriteChannels = sortChannels(favoriteChannels, channelSortOrder);
 
     notifyListeners();
   }
@@ -610,10 +522,11 @@ class PlaylistStore extends ChangeNotifier {
     loadingFavoriteChannels = true;
     notifyListeners();
     try {
-      favoriteChannels = _sortedChannels(
+      favoriteChannels = sortChannels(
         (await api.get('/favorites/channels') as List<dynamic>).map(
           (e) => Channel.fromJson(e as Map<String, dynamic>),
         ),
+        channelSortOrder,
       );
     } finally {
       loadingFavoriteChannels = false;
@@ -625,7 +538,7 @@ class PlaylistStore extends ChangeNotifier {
     loadingFavoriteGroups = true;
     notifyListeners();
     try {
-      favoriteGroups = _sortedGroups(
+      favoriteGroups = sortGroups(
         (await api.get('/favorites/groups') as List<dynamic>).map(
           (e) => Group.fromJson(e as Map<String, dynamic>),
         ),
@@ -703,7 +616,7 @@ class PlaylistStore extends ChangeNotifier {
       isFavorite: true,
     );
 
-    favoriteGroups = _sortedGroups(
+    favoriteGroups = sortGroups(
       favoriteGroups.map(
         (g) => g.playlistId == group.playlistId && g.name == group.name
             ? updated
@@ -719,6 +632,8 @@ class PlaylistStore extends ChangeNotifier {
     searchQuery = query;
     notifyListeners();
   }
+
+  // --- Playlist CRUD ---
 
   Future<void> createM3uPlaylist({
     required String name,
