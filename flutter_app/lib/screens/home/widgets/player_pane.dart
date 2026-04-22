@@ -19,7 +19,8 @@ class PlayerPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Channel? channel = store.nowPlaying;
-    final isCompactLayout = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    final isCompactLayout =
+        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
 
     if (channel == null) {
       return const Card(
@@ -53,6 +54,11 @@ class PlayerPane extends StatelessWidget {
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(child: CircularProgressIndicator()),
+                )
+              else if (store.epgSourceMissing)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text('No EPG source configured for this channel'),
                 )
               else if (store.epgEntries.isEmpty)
                 const Padding(
@@ -88,6 +94,8 @@ class PlayerPane extends StatelessWidget {
             Expanded(
               child: store.loadingEpg
                   ? const Center(child: CircularProgressIndicator())
+                  : store.epgSourceMissing
+                  ? const Text('No EPG source configured for this channel')
                   : store.epgEntries.isEmpty
                   ? const Text('No EPG data available')
                   : ListView.builder(

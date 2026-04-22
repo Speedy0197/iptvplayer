@@ -35,6 +35,7 @@ class PlaylistStore extends ChangeNotifier {
   bool loadingFavoriteGroups = false;
   bool _favoriteGroupsLoaded = false;
   bool loadingEpg = false;
+  bool epgSourceMissing = false;
   final Set<int> _refreshingPlaylistIds = <int>{};
   ChannelSortOrder channelSortOrder = ChannelSortOrder.byIndex;
 
@@ -187,6 +188,7 @@ class PlaylistStore extends ChangeNotifier {
     selectedPlaylistId = playlistId;
     selectedGroup = null;
     epgEntries = const [];
+    epgSourceMissing = false;
     nowPlaying = null;
     notifyListeners();
 
@@ -250,9 +252,16 @@ class PlaylistStore extends ChangeNotifier {
   Future<void> play(Channel channel) async {
     nowPlaying = channel;
     epgEntries = const [];
+    epgSourceMissing = false;
     notifyListeners();
 
-    if (channel.epgChannelId.isEmpty) {
+    final effectiveEpgChannelId = channel.epgChannelId.isNotEmpty
+        ? channel.epgChannelId
+        : channel.streamId;
+
+    if (effectiveEpgChannelId.isEmpty) {
+      epgSourceMissing = true;
+      notifyListeners();
       return;
     }
 
@@ -263,7 +272,7 @@ class PlaylistStore extends ChangeNotifier {
     try {
       epgEntries =
           (await api.get(
-                    '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(channel.epgChannelId)}',
+                    '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(effectiveEpgChannelId)}',
                   )
                   as List<dynamic>)
               .map((e) => EpgEntry.fromJson(e as Map<String, dynamic>))
@@ -281,6 +290,7 @@ class PlaylistStore extends ChangeNotifier {
 
     nowPlaying = null;
     epgEntries = const [];
+    epgSourceMissing = false;
     loadingEpg = false;
     notifyListeners();
   }
@@ -351,10 +361,10 @@ class PlaylistStore extends ChangeNotifier {
 
     if (nextIsFavorite) {
       if (!favoriteChannels.any((c) => c.id == channel.id)) {
-        favoriteChannels = sortChannels(
-          [channel.copyWith(isFavorite: true), ...favoriteChannels],
-          channelSortOrder,
-        );
+        favoriteChannels = sortChannels([
+          channel.copyWith(isFavorite: true),
+          ...favoriteChannels,
+        ], channelSortOrder);
       }
     } else {
       favoriteChannels = favoriteChannels
@@ -639,13 +649,16 @@ class PlaylistStore extends ChangeNotifier {
     required String name,
     String? m3uUrl,
     String? m3uContent,
+    String? epgUrl,
   }) async {
+    final trimmedEpgUrl = epgUrl?.trim() ?? '';
     final body = <String, dynamic>{
       'name': name,
       'type': 'm3u',
       if (m3uUrl != null && m3uUrl.isNotEmpty) 'm3u_url': m3uUrl,
       if (m3uContent != null && m3uContent.isNotEmpty)
         'm3u_content': m3uContent,
+      if (trimmedEpgUrl.isNotEmpty) 'epg_url': trimmedEpgUrl,
     };
 
     final result = await api.post('/playlists', body) as Map<String, dynamic>;
@@ -684,8 +697,12 @@ class PlaylistStore extends ChangeNotifier {
     String? xtreamPassword,
     String? vuplusIp,
     String? vuplusPort,
+    String? epgUrl,
   }) async {
     final body = <String, dynamic>{'name': name, 'type': type};
+    if (epgUrl != null) {
+      body['epg_url'] = epgUrl.trim();
+    }
 
     if (type == 'm3u') {
       if (m3uUrl != null && m3uUrl.isNotEmpty) {
@@ -718,7 +735,9 @@ class PlaylistStore extends ChangeNotifier {
     required String server,
     required String username,
     required String password,
+    String? epgUrl,
   }) async {
+    final trimmedEpgUrl = epgUrl?.trim() ?? '';
     final result =
         await api.post('/playlists', {
               'name': name,
@@ -726,6 +745,7 @@ class PlaylistStore extends ChangeNotifier {
               'xtream_server': server,
               'xtream_username': username,
               'xtream_password': password,
+              if (trimmedEpgUrl.isNotEmpty) 'epg_url': trimmedEpgUrl,
             })
             as Map<String, dynamic>;
 
@@ -739,13 +759,16 @@ class PlaylistStore extends ChangeNotifier {
     required String name,
     required String ip,
     required String port,
+    String? epgUrl,
   }) async {
+    final trimmedEpgUrl = epgUrl?.trim() ?? '';
     final result =
         await api.post('/playlists', {
               'name': name,
               'type': 'vuplus',
               'vuplus_ip': ip,
               'vuplus_port': port,
+              if (trimmedEpgUrl.isNotEmpty) 'epg_url': trimmedEpgUrl,
             })
             as Map<String, dynamic>;
 

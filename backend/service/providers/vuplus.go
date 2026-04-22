@@ -88,6 +88,7 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 				GroupName:  name,
 				StreamURL:  streamURL,
 				LogoURL:    logoURL,
+				EpgChannelID: svcRef,
 				SortOrder:  sortOrder,
 			})
 			sortOrder++

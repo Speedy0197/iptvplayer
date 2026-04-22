@@ -5,6 +5,7 @@ import "time"
 type User struct {
 	ID           int64     `json:"id"`
 	Username     string    `json:"username"`
+	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -27,16 +28,16 @@ type Playlist struct {
 }
 
 type Channel struct {
-	ID           int64   `json:"id"`
-	PlaylistID   int64   `json:"playlist_id"`
-	StreamID     string  `json:"stream_id"`
-	Name         string  `json:"name"`
-	GroupName    string  `json:"group_name"`
-	StreamURL    string  `json:"stream_url"`
-	LogoURL      string  `json:"logo_url"`
-	EpgChannelID string  `json:"epg_channel_id"`
-	SortOrder    int     `json:"sort_order"`
-	IsFavorite   bool    `json:"is_favorite"`
+	ID           int64  `json:"id"`
+	PlaylistID   int64  `json:"playlist_id"`
+	StreamID     string `json:"stream_id"`
+	Name         string `json:"name"`
+	GroupName    string `json:"group_name"`
+	StreamURL    string `json:"stream_url"`
+	LogoURL      string `json:"logo_url"`
+	EpgChannelID string `json:"epg_channel_id"`
+	SortOrder    int    `json:"sort_order"`
+	IsFavorite   bool   `json:"is_favorite"`
 }
 
 type Group struct {

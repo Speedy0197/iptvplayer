@@ -12,18 +12,23 @@ class AuthResponse {
   final String token;
   final int userId;
   final String username;
+  final String email;
 
   const AuthResponse({
     required this.token,
     required this.userId,
     required this.username,
+    required this.email,
   });
 
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
+    final email =
+        (json['email'] as String?) ?? (json['username'] as String? ?? '');
     return AuthResponse(
       token: json['token'] as String,
       userId: (json['user_id'] as num).toInt(),
-      username: json['username'] as String,
+      username: (json['username'] as String?) ?? email,
+      email: email,
     );
   }
 }
@@ -33,6 +38,7 @@ class Playlist {
   final String name;
   final String type;
   final String? m3uUrl;
+  final String? epgUrl;
   final String? xtreamServer;
   final String? xtreamUsername;
   final String? xtreamPassword;
@@ -45,6 +51,7 @@ class Playlist {
     required this.name,
     required this.type,
     this.m3uUrl,
+    this.epgUrl,
     this.xtreamServer,
     this.xtreamUsername,
     this.xtreamPassword,
@@ -59,6 +66,7 @@ class Playlist {
       name: (json['name'] as String?) ?? 'Untitled',
       type: (json['type'] as String?) ?? 'm3u',
       m3uUrl: json['m3u_url'] as String?,
+      epgUrl: json['epg_url'] as String?,
       xtreamServer: json['xtream_server'] as String?,
       xtreamUsername: json['xtream_username'] as String?,
       xtreamPassword: json['xtream_password'] as String?,

@@ -128,22 +128,19 @@ func RefreshPlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var channels []models.Channel
+	discoveredEPGURL := ""
 	switch p.Type {
 	case "m3u":
 		if p.M3UContent != nil && *p.M3UContent != "" {
-			channels, err = providers.ParseM3U(strings.NewReader(*p.M3UContent), playlistID)
+			channels, discoveredEPGURL, err = providers.ParseM3UWithEPG(strings.NewReader(*p.M3UContent), playlistID)
 		} else if p.M3UURL != nil && *p.M3UURL != "" {
-			channels, err = providers.FetchM3U(*p.M3UURL, playlistID)
+			channels, discoveredEPGURL, err = providers.FetchM3UWithEPG(*p.M3UURL, playlistID)
 		} else {
 			writeError(w, http.StatusBadRequest, "playlist has no URL or content")
 			return
 		}
 	case "xtream":
-		var epgURL string
-		channels, epgURL, err = providers.FetchXtream(p, playlistID)
-		if err == nil && epgURL != "" {
-			database.DB.Exec(`UPDATE playlists SET epg_url = ? WHERE id = ?`, epgURL, playlistID)
-		}
+		channels, discoveredEPGURL, err = providers.FetchXtream(p, playlistID)
 	case "vuplus":
 		channels, err = providers.FetchVuplus(p, playlistID)
 	}
@@ -162,7 +159,29 @@ func RefreshPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resolvedEPGURL := resolvePlaylistEPGURL(p.EpgURL, discoveredEPGURL)
+	if resolvedEPGURL != nil {
+		if _, err := database.DB.Exec(`UPDATE playlists SET epg_url = ? WHERE id = ?`, *resolvedEPGURL, playlistID); err != nil {
+			log.Printf("refresh playlist %d failed to persist epg_url: %v", playlistID, err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(channels)})
+}
+
+func resolvePlaylistEPGURL(existing *string, discovered string) *string {
+	if existing != nil {
+		trimmed := strings.TrimSpace(*existing)
+		if trimmed != "" {
+			return &trimmed
+		}
+	}
+
+	trimmedDiscovered := strings.TrimSpace(discovered)
+	if trimmedDiscovered == "" {
+		return nil
+	}
+	return &trimmedDiscovered
 }
 
 func persistRefreshedChannels(playlistID int64, channels []models.Channel) error {
