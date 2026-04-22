@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/flodev/iptvplayer/database"
@@ -58,6 +59,11 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	channelEpgID := chi.URLParam(r, "channel_epg_id")
+	channelEpgID = strings.TrimSpace(channelEpgID)
+	if channelEpgID == "" {
+		writeError(w, http.StatusBadRequest, "invalid channel_epg_id")
+		return
+	}
 
 	if _, ok := ownsPlaylist(userID, playlistID); !ok {
 		writeError(w, http.StatusNotFound, "playlist not found")
@@ -104,8 +110,14 @@ func refreshEPG(playlistID int64) {
 	if err := database.DB.QueryRow(
 		`SELECT COALESCE(epg_url, '') FROM playlists WHERE id = ?`, playlistID,
 	).Scan(&epgURL); err != nil || epgURL == "" {
+		if err != nil {
+			log.Printf("EPG source lookup failed for playlist %d: %v", playlistID, err)
+		} else {
+			log.Printf("EPG refresh skipped for playlist %d: epg_url is empty", playlistID)
+		}
 		return
 	}
+	epgURL = strings.TrimSpace(epgURL)
 
 	resp, err := http.Get(epgURL)
 	if err != nil {
@@ -113,6 +125,10 @@ func refreshEPG(playlistID int64) {
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		log.Printf("EPG fetch failed for playlist %d: unexpected status %d", playlistID, resp.StatusCode)
+		return
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -157,7 +173,11 @@ func refreshEPG(playlistID int64) {
 		if err != nil {
 			continue
 		}
-		if _, err := stmt.Exec(prog.Channel, playlistID, start, end, prog.Title.Value, prog.Desc.Value); err != nil {
+		channelID := strings.TrimSpace(prog.Channel)
+		if channelID == "" {
+			continue
+		}
+		if _, err := stmt.Exec(channelID, playlistID, start, end, prog.Title.Value, prog.Desc.Value); err != nil {
 			log.Printf("EPG insert failed for playlist %d channel %q: %v", playlistID, prog.Channel, err)
 		}
 	}

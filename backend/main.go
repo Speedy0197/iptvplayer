@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/flodev/iptvplayer/database"
 	"github.com/flodev/iptvplayer/handlers"
@@ -18,9 +20,22 @@ func main() {
 	dbPath := getEnv("DB_PATH", "/data/iptv.db")
 	port := getEnv("PORT", "8080")
 	jwtSecret := getEnv("JWT_SECRET", "change-me-in-production")
+	smtpPort := getEnv("SMTP_PORT", "587")
+	resetTokenTTLMinutes := getEnv("RESET_TOKEN_TTL_MINUTES", "60")
+	resetRateWindowSeconds := getEnv("RESET_RATE_WINDOW_SECONDS", "60")
+	resetRateLimit := getEnv("RESET_RATE_LIMIT", "5")
 
 	database.Init(dbPath)
 	middleware.JWTSecret = []byte(jwtSecret)
+	handlers.SMTPHost = getEnv("SMTP_HOST", "")
+	handlers.SMTPPort = smtpPort
+	handlers.SMTPUsername = getEnv("SMTP_USERNAME", "")
+	handlers.SMTPPassword = getEnv("SMTP_PASSWORD", "")
+	handlers.SMTPFrom = getEnv("SMTP_FROM", "")
+	handlers.ResetLinkBase = getEnv("RESET_LINK_BASE_URL", "")
+	handlers.ResetTokenTTL = parseEnvDurationMinutes(resetTokenTTLMinutes, time.Hour)
+	handlers.ResetRateWindow = parseEnvDurationSeconds(resetRateWindowSeconds, time.Minute)
+	handlers.ResetRateLimit = parseEnvInt(resetRateLimit, 5)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
@@ -36,6 +51,9 @@ func main() {
 		// Public
 		r.Post("/auth/register", handlers.Register)
 		r.Post("/auth/login", handlers.Login)
+		r.Post("/auth/request-reset", handlers.RequestPasswordReset)
+		r.Post("/auth/verify-reset", handlers.VerifyResetToken)
+		r.Post("/auth/reset-password", handlers.ResetPassword)
 
 		// Protected (token accepted via Authorization header or ?token= query param)
 		r.Group(func(r chi.Router) {
@@ -82,4 +100,28 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseEnvInt(value string, fallback int) int {
+	v, err := strconv.Atoi(value)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
+}
+
+func parseEnvDurationMinutes(value string, fallback time.Duration) time.Duration {
+	v, err := strconv.Atoi(value)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return time.Duration(v) * time.Minute
+}
+
+func parseEnvDurationSeconds(value string, fallback time.Duration) time.Duration {
+	v, err := strconv.Atoi(value)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return time.Duration(v) * time.Second
 }

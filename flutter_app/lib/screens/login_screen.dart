@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
+import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -14,14 +15,14 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
 
   String? _error;
 
   @override
   void dispose() {
-    _usernameCtrl.dispose();
+    _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
@@ -32,7 +33,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _error = null);
     try {
-      await auth.login(_usernameCtrl.text.trim(), _passwordCtrl.text);
+      await auth.login(_emailCtrl.text.trim(), _passwordCtrl.text);
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
@@ -102,15 +103,22 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 const SizedBox(height: 20),
                                 TextFormField(
-                                  controller: _usernameCtrl,
+                                  controller: _emailCtrl,
                                   decoration: const InputDecoration(
-                                    labelText: 'Username',
-                                    prefixIcon: Icon(Icons.person_outline),
+                                    labelText: 'Email',
+                                    prefixIcon: Icon(Icons.alternate_email),
                                   ),
-                                  validator: (value) =>
-                                      value == null || value.trim().isEmpty
-                                      ? 'Required'
-                                      : null,
+                                  keyboardType: TextInputType.emailAddress,
+                                  validator: (value) {
+                                    final v = value?.trim() ?? '';
+                                    if (v.isEmpty) {
+                                      return 'Required';
+                                    }
+                                    if (!v.contains('@')) {
+                                      return 'Enter a valid email';
+                                    }
+                                    return null;
+                                  },
                                 ),
                                 const SizedBox(height: 12),
                                 TextFormField(
@@ -157,7 +165,23 @@ class _LoginScreenState extends State<LoginScreen> {
                                         )
                                       : const Text('Sign In'),
                                 ),
-                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton(
+                                    onPressed: auth.busy
+                                        ? null
+                                        : () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute<void>(
+                                                builder: (_) =>
+                                                    const ForgotPasswordScreen(),
+                                              ),
+                                            );
+                                          },
+                                    child: const Text('Forgot password?'),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
                                 TextButton(
                                   onPressed: auth.busy
                                       ? null

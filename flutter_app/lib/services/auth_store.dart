@@ -7,7 +7,7 @@ import 'api_client.dart';
 
 class AuthStore extends ChangeNotifier {
   static const _tokenKey = 'jwt_token';
-  static const _usernameKey = 'username';
+  static const _usernameKey = 'username'; // stores email as display identity
   static const _userIdKey = 'user_id';
   static const _apiBaseKey = 'api_base';
 
@@ -64,13 +64,27 @@ class AuthStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> login(String username, String password) async {
+  Future<void> login(String email, String password) async {
     busy = true;
     notifyListeners();
     try {
       final json =
-          await api.post('/auth/login', {
-                'username': username,
+          await api.post('/auth/login', {'email': email, 'password': password})
+              as Map<String, dynamic>;
+      await _persist(AuthResponse.fromJson(json));
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> register(String email, String password) async {
+    busy = true;
+    notifyListeners();
+    try {
+      final json =
+          await api.post('/auth/register', {
+                'email': email,
                 'password': password,
               })
               as Map<String, dynamic>;
@@ -81,21 +95,19 @@ class AuthStore extends ChangeNotifier {
     }
   }
 
-  Future<void> register(String username, String password) async {
-    busy = true;
-    notifyListeners();
-    try {
-      final json =
-          await api.post('/auth/register', {
-                'username': username,
-                'password': password,
-              })
-              as Map<String, dynamic>;
-      await _persist(AuthResponse.fromJson(json));
-    } finally {
-      busy = false;
-      notifyListeners();
-    }
+  Future<void> requestPasswordReset(String email) async {
+    await api.post('/auth/request-reset', {'email': email});
+  }
+
+  Future<void> verifyResetToken(String token) async {
+    await api.post('/auth/verify-reset', {'token': token});
+  }
+
+  Future<void> resetPassword(String token, String newPassword) async {
+    await api.post('/auth/reset-password', {
+      'token': token,
+      'new_password': newPassword,
+    });
   }
 
   Future<void> logout() async {

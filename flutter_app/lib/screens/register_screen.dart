@@ -13,7 +13,7 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
 
@@ -21,7 +21,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
-    _usernameCtrl.dispose();
+    _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
     super.dispose();
@@ -33,7 +33,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _error = null);
     try {
-      await auth.register(_usernameCtrl.text.trim(), _passwordCtrl.text);
+      await auth.register(_emailCtrl.text.trim(), _passwordCtrl.text);
       if (mounted) {
         Navigator.of(context).pop();
       }
@@ -72,22 +72,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Set up a username and password to get started.',
+                      'Set up your email and password to get started.',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: Colors.white70,
                       ),
                     ),
                     const SizedBox(height: 20),
                     TextFormField(
-                      controller: _usernameCtrl,
+                      controller: _emailCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Username',
-                        prefixIcon: Icon(Icons.person_outline),
+                        labelText: 'Email',
+                        prefixIcon: Icon(Icons.alternate_email),
                       ),
-                      validator: (value) =>
-                          value == null || value.trim().isEmpty
-                          ? 'Required'
-                          : null,
+                      keyboardType: TextInputType.emailAddress,
+                      validator: (value) {
+                        final v = value?.trim() ?? '';
+                        if (v.isEmpty) {
+                          return 'Required';
+                        }
+                        if (!v.contains('@')) {
+                          return 'Enter a valid email';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 12),
                     TextFormField(

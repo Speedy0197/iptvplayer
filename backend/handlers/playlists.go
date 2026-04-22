@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/flodev/iptvplayer/database"
 	"github.com/flodev/iptvplayer/middleware"
@@ -59,6 +60,7 @@ func CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		XtreamPassword *string `json:"xtream_password"`
 		VuplusIP       *string `json:"vuplus_ip"`
 		VuplusPort     *string `json:"vuplus_port"`
+		EpgURL         *string `json:"epg_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -79,12 +81,14 @@ func CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resolvedEPGURL := normalizeOptionalString(req.EpgURL)
+
 	res, err := database.DB.Exec(
-		`INSERT INTO playlists (user_id, name, type, m3u_url, m3u_content, xtream_server, xtream_username, xtream_password, vuplus_ip, vuplus_port)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO playlists (user_id, name, type, m3u_url, m3u_content, xtream_server, xtream_username, xtream_password, vuplus_ip, vuplus_port, epg_url)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		userID, req.Name, req.Type, req.M3UURL, req.M3UContent,
 		req.XtreamServer, req.XtreamUsername, req.XtreamPassword,
-		req.VuplusIP, req.VuplusPort,
+		req.VuplusIP, req.VuplusPort, resolvedEPGURL,
 	)
 	if err != nil {
 		log.Printf("create playlist failed user=%d type=%s name=%q: %v", userID, req.Type, req.Name, err)
@@ -97,7 +101,7 @@ func CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, _ := res.LastInsertId()
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": req.Name, "type": req.Type})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": req.Name, "type": req.Type, "epg_url": resolvedEPGURL})
 }
 
 func UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +128,7 @@ func UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		XtreamPassword *string `json:"xtream_password"`
 		VuplusIP       *string `json:"vuplus_ip"`
 		VuplusPort     *string `json:"vuplus_port"`
+		EpgURL         *string `json:"epg_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -168,6 +173,11 @@ func UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resolvedEPGURL := existing.EpgURL
+	if req.EpgURL != nil {
+		resolvedEPGURL = normalizeOptionalString(req.EpgURL)
+	}
+
 	_, err = database.DB.Exec(
 		`UPDATE playlists
 		 SET name = ?,
@@ -178,7 +188,7 @@ func UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		     xtream_password = ?,
 		     vuplus_ip = ?,
 		     vuplus_port = ?,
-		     epg_url = NULL,
+		     epg_url = ?,
 		     last_refreshed = NULL
 		 WHERE id = ? AND user_id = ?`,
 		req.Name,
@@ -189,6 +199,7 @@ func UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		req.XtreamPassword,
 		req.VuplusIP,
 		req.VuplusPort,
+		resolvedEPGURL,
 		playlistID,
 		userID,
 	)
@@ -197,7 +208,18 @@ func UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"id": playlistID, "name": req.Name, "type": req.Type})
+	writeJSON(w, http.StatusOK, map[string]any{"id": playlistID, "name": req.Name, "type": req.Type, "epg_url": resolvedEPGURL})
+}
+
+func normalizeOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func validatePlaylistInput(

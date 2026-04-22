@@ -13,6 +13,7 @@ Future<void> showPlaylistDialog(
   Playlist? editing,
 }) async {
   final nameCtrl = TextEditingController(text: editing?.name ?? '');
+  final epgUrlCtrl = TextEditingController(text: editing?.epgUrl ?? '');
   final m3uUrlCtrl = TextEditingController(text: editing?.m3uUrl ?? '');
   final xtreamServerCtrl = TextEditingController(
     text: editing?.xtreamServer ?? '',
@@ -46,7 +47,7 @@ Future<void> showPlaylistDialog(
             title: Text(editing == null ? 'Add playlist' : 'Edit playlist'),
             content: SizedBox(
               width: dialogWidth > 640 ? 520 : dialogWidth - 64,
-              height: 340,
+              height: 420,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -220,6 +221,14 @@ Future<void> showPlaylistDialog(
                             ),
                           ),
                         ],
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: epgUrlCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'EPG XMLTV URL (optional)',
+                            hintText: 'https://example.com/epg.xml',
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -255,6 +264,7 @@ Future<void> showPlaylistDialog(
                         try {
                           final store = context.read<PlaylistStore>();
                           final name = nameCtrl.text.trim();
+                          final epgUrl = epgUrlCtrl.text.trim();
                           if (name.isEmpty) {
                             throw const ApiException('Name is required');
                           }
@@ -283,6 +293,7 @@ Future<void> showPlaylistDialog(
                                 m3uContent: m3uSource == 'file'
                                     ? m3uContent
                                     : null,
+                                epgUrl: epgUrl,
                               );
                             } else if (selectedType == 'xtream') {
                               await store.createXtreamPlaylist(
@@ -290,6 +301,7 @@ Future<void> showPlaylistDialog(
                                 server: xtreamServerCtrl.text.trim(),
                                 username: xtreamUserCtrl.text.trim(),
                                 password: xtreamPassCtrl.text,
+                                epgUrl: epgUrl,
                               );
                             } else {
                               await store.createVuplusPlaylist(
@@ -298,6 +310,7 @@ Future<void> showPlaylistDialog(
                                 port: vuplusPortCtrl.text.trim().isEmpty
                                     ? '80'
                                     : vuplusPortCtrl.text.trim(),
+                                epgUrl: epgUrl,
                               );
                             }
                           } else {
@@ -318,6 +331,7 @@ Future<void> showPlaylistDialog(
                               xtreamPassword: xtreamPassCtrl.text,
                               vuplusIp: vuplusIpCtrl.text.trim(),
                               vuplusPort: vuplusPortCtrl.text.trim(),
+                              epgUrl: epgUrl,
                             );
                           }
 
@@ -370,6 +384,7 @@ Future<void> showPlaylistDialog(
 
   WidgetsBinding.instance.addPostFrameCallback((_) {
     nameCtrl.dispose();
+    epgUrlCtrl.dispose();
     m3uUrlCtrl.dispose();
     xtreamServerCtrl.dispose();
     xtreamUserCtrl.dispose();
