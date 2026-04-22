@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/flodev/iptvplayer/database"
 	"github.com/flodev/iptvplayer/middleware"
@@ -109,27 +108,7 @@ func UpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var existing models.Playlist
-	err = database.DB.QueryRow(
-		`SELECT id, user_id, name, type, m3u_url, m3u_content, xtream_server, xtream_username, xtream_password, vuplus_ip, vuplus_port, epg_url, last_refreshed, created_at
-		 FROM playlists WHERE id = ? AND user_id = ?`,
-		playlistID, userID,
-	).Scan(
-		&existing.ID,
-		&existing.UserID,
-		&existing.Name,
-		&existing.Type,
-		&existing.M3UURL,
-		&existing.M3UContent,
-		&existing.XtreamServer,
-		&existing.XtreamUsername,
-		&existing.XtreamPassword,
-		&existing.VuplusIP,
-		&existing.VuplusPort,
-		&existing.EpgURL,
-		&existing.LastRefreshed,
-		&existing.CreatedAt,
-	)
+	existing, err := database.GetPlaylistForUser(playlistID, userID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "playlist not found")
 		return
@@ -262,17 +241,6 @@ type badRequestError struct{ msg string }
 func (e badRequestError) Error() string { return e.msg }
 
 func errBadRequest(msg string) error { return badRequestError{msg: msg} }
-
-func isSQLiteBusy(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "database is locked") ||
-		strings.Contains(msg, "database is busy") ||
-		strings.Contains(msg, "sqlite_busy") ||
-		strings.Contains(msg, "sqlite_locked")
-}
 
 func DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)

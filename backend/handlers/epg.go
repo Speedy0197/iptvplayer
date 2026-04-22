@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -108,34 +109,41 @@ func refreshEPG(playlistID int64) {
 
 	resp, err := http.Get(epgURL)
 	if err != nil {
+		log.Printf("EPG fetch failed for playlist %d: %v", playlistID, err)
 		return
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("EPG read failed for playlist %d: %v", playlistID, err)
 		return
 	}
 
 	var tv xmltvTV
 	if err := xml.Unmarshal(body, &tv); err != nil {
+		log.Printf("EPG parse failed for playlist %d: %v", playlistID, err)
 		return
 	}
 
 	tx, err := database.DB.Begin()
 	if err != nil {
+		log.Printf("EPG db transaction failed for playlist %d: %v", playlistID, err)
 		return
 	}
 	defer tx.Rollback()
 
-	// Delete old entries for this playlist
-	tx.Exec(`DELETE FROM epg_cache WHERE playlist_id = ?`, playlistID)
+	if _, err := tx.Exec(`DELETE FROM epg_cache WHERE playlist_id = ?`, playlistID); err != nil {
+		log.Printf("EPG cache clear failed for playlist %d: %v", playlistID, err)
+		return
+	}
 
 	stmt, err := tx.Prepare(
 		`INSERT OR REPLACE INTO epg_cache (channel_epg_id, playlist_id, start_time, end_time, title, description)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
+		log.Printf("EPG insert prepare failed for playlist %d: %v", playlistID, err)
 		return
 	}
 	defer stmt.Close()
@@ -149,12 +157,20 @@ func refreshEPG(playlistID int64) {
 		if err != nil {
 			continue
 		}
-		stmt.Exec(prog.Channel, playlistID, start, end, prog.Title.Value, prog.Desc.Value)
+		if _, err := stmt.Exec(prog.Channel, playlistID, start, end, prog.Title.Value, prog.Desc.Value); err != nil {
+			log.Printf("EPG insert failed for playlist %d channel %q: %v", playlistID, prog.Channel, err)
+		}
 	}
 
-	tx.Exec(
+	if _, err := tx.Exec(
 		`INSERT OR REPLACE INTO epg_fetch_log (playlist_id, fetched_at) VALUES (?, ?)`,
 		playlistID, time.Now(),
-	)
-	tx.Commit()
+	); err != nil {
+		log.Printf("EPG fetch log update failed for playlist %d: %v", playlistID, err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("EPG commit failed for playlist %d: %v", playlistID, err)
+	}
 }

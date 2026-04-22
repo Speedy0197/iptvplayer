@@ -36,9 +36,7 @@ func ListFavoriteChannels(w http.ResponseWriter, r *http.Request) {
 	channels := []models.Channel{}
 	for rows.Next() {
 		var c models.Channel
-		if err := rows.Scan(&c.ID, &c.PlaylistID, &c.StreamID, &c.Name,
-			&c.GroupName, &c.StreamURL, &c.LogoURL, &c.EpgChannelID,
-			&c.SortOrder, &c.IsFavorite); err != nil {
+		if err := database.ScanChannel(rows, &c); err != nil {
 			continue
 		}
 		channels = append(channels, c)
@@ -76,7 +74,7 @@ func AddFavoriteChannel(w http.ResponseWriter, r *http.Request) {
 		`INSERT OR IGNORE INTO favorite_channels (user_id, channel_id) VALUES (?, ?)`,
 		userID, req.ChannelID,
 	); err != nil {
-		if isSQLiteBusyErr(err) {
+		if isSQLiteBusy(err) {
 			writeError(w, http.StatusServiceUnavailable, "database busy, please retry")
 			return
 		}
@@ -98,7 +96,7 @@ func RemoveFavoriteChannel(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM favorite_channels WHERE user_id = ? AND channel_id = ?`,
 		userID, channelID,
 	); err != nil {
-		if isSQLiteBusyErr(err) {
+		if isSQLiteBusy(err) {
 			writeError(w, http.StatusServiceUnavailable, "database busy, please retry")
 			return
 		}
