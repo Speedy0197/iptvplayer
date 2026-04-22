@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
@@ -581,10 +582,7 @@ func sendPasswordResetEmail(toEmail, rawCode string) error {
 	body += fmt.Sprintf("Enter this 4-digit code in the app. The code expires in %d minutes.\n", int(ResetTokenTTL.Minutes()))
 	body += "If you did not request this, you can ignore this email.\n"
 
-	msg := []byte("Subject: IPTV Player password reset\r\n" +
-		"MIME-Version: 1.0\r\n" +
-		"Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n" +
-		body)
+	msg := buildSMTPMessage(toEmail, "IPTV Player password reset", body)
 
 	addr := net.JoinHostPort(SMTPHost, SMTPPort)
 
@@ -606,10 +604,7 @@ func sendVerificationEmail(toEmail, rawCode string) error {
 	body += fmt.Sprintf("The code expires in %d minutes.\n", int(ResetTokenTTL.Minutes()))
 	body += "If you did not create this account, you can ignore this email.\n"
 
-	msg := []byte("Subject: IPTV Player email verification\r\n" +
-		"MIME-Version: 1.0\r\n" +
-		"Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n" +
-		body)
+	msg := buildSMTPMessage(toEmail, "IPTV Player email verification", body)
 
 	addr := net.JoinHostPort(SMTPHost, SMTPPort)
 	if SMTPPort == "465" {
@@ -707,6 +702,32 @@ func sendWithClient(client *smtp.Client, toEmail string, msg []byte) error {
 	}
 
 	return nil
+}
+
+func buildSMTPMessage(toEmail, subject, body string) []byte {
+	header := textproto.MIMEHeader{}
+	header.Set("From", SMTPFrom)
+	header.Set("To", toEmail)
+	header.Set("Subject", subject)
+	header.Set("Date", time.Now().UTC().Format(time.RFC1123Z))
+	header.Set("Message-ID", fmt.Sprintf("<%d.%d@%s>", time.Now().UnixNano(), time.Now().Unix()%100000, SMTPHost))
+	header.Set("MIME-Version", "1.0")
+	header.Set("Content-Type", "text/plain; charset=UTF-8")
+	header.Set("Content-Transfer-Encoding", "8bit")
+
+	var b strings.Builder
+	for k, values := range header {
+		for _, v := range values {
+			b.WriteString(k)
+			b.WriteString(": ")
+			b.WriteString(v)
+			b.WriteString("\r\n")
+		}
+	}
+	b.WriteString("\r\n")
+	b.WriteString(body)
+
+	return []byte(b.String())
 }
 
 func allowResetFor(email, ip string) bool {
