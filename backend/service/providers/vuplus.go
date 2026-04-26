@@ -113,7 +113,7 @@ func fetchE2Services(rawURL string) ([]e2Service, error) {
 }
 
 func piconName(sRef string) string {
-	s := strings.ToLower(sRef)
+	s := sRef
 	s = strings.ReplaceAll(s, ":", "_")
 	s = strings.TrimRight(s, "_")
 	return s
