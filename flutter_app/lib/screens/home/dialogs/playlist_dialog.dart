@@ -75,161 +75,163 @@ Future<void> showPlaylistDialog(
                   ),
                   const SizedBox(height: 8),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (selectedType == 'm3u')
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              SegmentedButton<String>(
-                                showSelectedIcon: false,
-                                segments: const [
-                                  ButtonSegment(
-                                    value: 'url',
-                                    label: Text('URL'),
-                                  ),
-                                  ButtonSegment(
-                                    value: 'file',
-                                    label: Text('File Upload'),
-                                  ),
-                                ],
-                                selected: {m3uSource},
-                                onSelectionChanged: (next) {
-                                  setState(() {
-                                    m3uSource = next.first;
-                                    error = null;
-                                  });
-                                },
-                              ),
-                              const SizedBox(height: 12),
-                              if (m3uSource == 'url')
-                                TextField(
-                                  controller: m3uUrlCtrl,
-                                  decoration: const InputDecoration(
-                                    labelText: 'M3U URL',
-                                  ),
-                                )
-                              else ...[
-                                OutlinedButton.icon(
-                                  onPressed: () async {
-                                    final result = await FilePicker.platform
-                                        .pickFiles(
-                                          type: FileType.custom,
-                                          allowedExtensions: const [
-                                            'm3u',
-                                            'm3u8',
-                                            'txt',
-                                          ],
-                                          withData: true,
-                                        );
-                                    if (result == null ||
-                                        result.files.isEmpty) {
-                                      return;
-                                    }
-
-                                    final pickedFile = result.files.first;
-                                    final bytes = pickedFile.bytes;
-                                    if (bytes == null || bytes.isEmpty) {
-                                      setState(() {
-                                        error =
-                                            'Could not read the selected M3U file';
-                                      });
-                                      return;
-                                    }
-
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (selectedType == 'm3u')
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                SegmentedButton<String>(
+                                  showSelectedIcon: false,
+                                  segments: const [
+                                    ButtonSegment(
+                                      value: 'url',
+                                      label: Text('URL'),
+                                    ),
+                                    ButtonSegment(
+                                      value: 'file',
+                                      label: Text('File Upload'),
+                                    ),
+                                  ],
+                                  selected: {m3uSource},
+                                  onSelectionChanged: (next) {
                                     setState(() {
-                                      m3uContent = utf8.decode(
-                                        bytes,
-                                        allowMalformed: true,
-                                      );
-                                      m3uFileName = pickedFile.name;
+                                      m3uSource = next.first;
                                       error = null;
                                     });
                                   },
-                                  icon: const Icon(Icons.upload_file),
-                                  label: Text(
-                                    m3uFileName == null
-                                        ? 'Choose M3U File'
-                                        : 'Replace File',
-                                  ),
                                 ),
-                                const SizedBox(height: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.outlineVariant,
+                                const SizedBox(height: 12),
+                                if (m3uSource == 'url')
+                                  TextField(
+                                    controller: m3uUrlCtrl,
+                                    decoration: const InputDecoration(
+                                      labelText: 'M3U URL',
                                     ),
-                                    borderRadius: BorderRadius.circular(12),
+                                  )
+                                else ...[
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final result = await FilePicker.platform
+                                          .pickFiles(
+                                            type: FileType.custom,
+                                            allowedExtensions: const [
+                                              'm3u',
+                                              'm3u8',
+                                              'txt',
+                                            ],
+                                            withData: true,
+                                          );
+                                      if (result == null ||
+                                          result.files.isEmpty) {
+                                        return;
+                                      }
+
+                                      final pickedFile = result.files.first;
+                                      final bytes = pickedFile.bytes;
+                                      if (bytes == null || bytes.isEmpty) {
+                                        setState(() {
+                                          error =
+                                              'Could not read the selected M3U file';
+                                        });
+                                        return;
+                                      }
+
+                                      setState(() {
+                                        m3uContent = utf8.decode(
+                                          bytes,
+                                          allowMalformed: true,
+                                        );
+                                        m3uFileName = pickedFile.name;
+                                        error = null;
+                                      });
+                                    },
+                                    icon: const Icon(Icons.upload_file),
+                                    label: Text(
+                                      m3uFileName == null
+                                          ? 'Choose M3U File'
+                                          : 'Replace File',
+                                    ),
                                   ),
-                                  child: Text(
-                                    m3uFileName ??
-                                        'No file selected. Upload an M3U file from this device.',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium,
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.outlineVariant,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      m3uFileName ??
+                                          'No file selected. Upload an M3U file from this device.',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodyMedium,
+                                    ),
                                   ),
-                                ),
+                                ],
                               ],
-                            ],
-                          )
-                        else if (selectedType == 'xtream') ...[
-                          TextField(
-                            controller: xtreamServerCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Xtream server URL',
-                              hintText: 'http://provider.example.com:8080',
+                            )
+                          else if (selectedType == 'xtream') ...[
+                            TextField(
+                              controller: xtreamServerCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Xtream server URL',
+                                hintText: 'http://provider.example.com:8080',
+                              ),
                             ),
-                          ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: xtreamUserCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Xtream username',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: xtreamPassCtrl,
+                              decoration: InputDecoration(
+                                labelText: editing == null
+                                    ? 'Xtream password'
+                                    : 'Xtream password (optional)',
+                              ),
+                              obscureText: true,
+                            ),
+                          ] else ...[
+                            TextField(
+                              controller: vuplusIpCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'VU+ IP / host',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: vuplusPortCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'VU+ port',
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 8),
                           TextField(
-                            controller: xtreamUserCtrl,
+                            controller: epgUrlCtrl,
                             decoration: const InputDecoration(
-                              labelText: 'Xtream username',
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: xtreamPassCtrl,
-                            decoration: InputDecoration(
-                              labelText: editing == null
-                                  ? 'Xtream password'
-                                  : 'Xtream password (optional)',
-                            ),
-                            obscureText: true,
-                          ),
-                        ] else ...[
-                          TextField(
-                            controller: vuplusIpCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'VU+ IP / host',
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: vuplusPortCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'VU+ port',
+                              labelText: 'EPG XMLTV URL (optional)',
+                              hintText: 'https://example.com/epg.xml',
                             ),
                           ),
                         ],
-                        const SizedBox(height: 8),
-                        TextField(
-                          controller: epgUrlCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'EPG XMLTV URL (optional)',
-                            hintText: 'https://example.com/epg.xml',
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                   SizedBox(

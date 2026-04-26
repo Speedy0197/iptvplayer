@@ -37,18 +37,22 @@ class ChannelLogoAvatar extends StatelessWidget {
       child: SizedBox(
         width: radius * 2,
         height: radius * 2,
-        child: Image.network(
-          effectiveLogoUrl,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            assert(() {
-              debugPrint(
-                '[channel-logo] failed loading logo url=$effectiveLogoUrl (raw=$logoUrl) error=$error',
-              );
-              return true;
-            }());
-            return fallback;
-          },
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: Image.network(
+            effectiveLogoUrl,
+            fit: BoxFit.contain,
+            alignment: Alignment.center,
+            errorBuilder: (context, error, stackTrace) {
+              assert(() {
+                debugPrint(
+                  '[channel-logo] failed loading logo url=$effectiveLogoUrl (raw=$logoUrl) error=$error',
+                );
+                return true;
+              }());
+              return fallback;
+            },
+          ),
         ),
       ),
     );
