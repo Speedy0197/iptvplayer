@@ -71,18 +71,20 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 				continue
 			}
 
+			canonicalSvcRef := normalizeVuplusServiceRef(svcRef)
 			streamURL := fmt.Sprintf("http://%s:8001/%s", ip, svcRef)
-			logoURL, usedCandidate, attemptDebug := resolveVuplusPiconURL(base, svcRef, piconClient, piconExistsCache)
+			logoURL, usedCandidate, attemptDebug := resolveVuplusPiconURL(base, svcRef, canonicalSvcRef, piconClient, piconExistsCache)
 			if logoURL == "" {
 				piconMissing++
 			} else {
 				piconFound++
 			}
 			if debuggedPicon < debugPiconLimit {
-				log.Printf("[vuplus][picon] playlist=%d channel=%q sRef=%q selected=%q used=%q attempts=%s",
+				log.Printf("[vuplus][picon] playlist=%d channel=%q sRef=%q canonical=%q selected=%q used=%q attempts=%s",
 					playlistID,
 					svcName,
 					svcRef,
+					canonicalSvcRef,
 					logoURL,
 					usedCandidate,
 					attemptDebug,
@@ -136,34 +138,59 @@ func piconName(sRef string) string {
 	return s
 }
 
+// normalizeVuplusServiceRef keeps only the canonical Enigma2 service fields.
+// Many IPTV-backed services append URL/name segments after field 10, but picons
+// are keyed by the first 10 fields only.
+func normalizeVuplusServiceRef(sRef string) string {
+	trimmed := strings.TrimSpace(sRef)
+	if trimmed == "" {
+		return ""
+	}
+
+	parts := strings.Split(trimmed, ":")
+	if len(parts) >= 10 {
+		return strings.Join(parts[:10], ":") + ":"
+	}
+
+	return trimmed
+}
+
 func vuplusPiconCandidates(base, sRef string) []string {
 	trimmedRef := strings.TrimSpace(sRef)
 	if trimmedRef == "" {
 		return nil
 	}
+	canonicalRef := normalizeVuplusServiceRef(trimmedRef)
+	if canonicalRef == "" {
+		canonicalRef = trimmedRef
+	}
 
-	underscoreName := piconName(trimmedRef)
+	underscoreName := piconName(canonicalRef)
 	lowerUnderscoreName := strings.ToLower(underscoreName)
-	escapedRef := url.PathEscape(trimmedRef)
+	escapedCanonicalRef := url.QueryEscape(canonicalRef)
+	escapedOriginalRef := url.QueryEscape(trimmedRef)
 
 	candidates := []string{
+		fmt.Sprintf("%s/web/getpicon?sRef=%s", base, escapedCanonicalRef),
 		fmt.Sprintf("%s/picon/%s.png", base, underscoreName),
+	}
+
+	if trimmedRef != canonicalRef {
+		candidates = append(candidates, fmt.Sprintf("%s/web/getpicon?sRef=%s", base, escapedOriginalRef))
 	}
 
 	if lowerUnderscoreName != underscoreName {
 		candidates = append(candidates, fmt.Sprintf("%s/picon/%s.png", base, lowerUnderscoreName))
 	}
 
-	candidates = append(candidates,
-		fmt.Sprintf("%s/picon/%s.png", base, escapedRef),
-		fmt.Sprintf("%s/picon/%s", base, escapedRef),
-	)
-
 	return candidates
 }
 
-func resolveVuplusPiconURL(base, sRef string, client *http.Client, cache map[string]bool) (string, string, string) {
-	candidates := vuplusPiconCandidates(base, sRef)
+func resolveVuplusPiconURL(base, sRef, canonicalSRef string, client *http.Client, cache map[string]bool) (string, string, string) {
+	candidates := vuplusPiconCandidates(base, canonicalSRef)
+	if len(candidates) == 0 {
+		candidates = vuplusPiconCandidates(base, sRef)
+	}
 	if len(candidates) == 0 {
 		return "", "", "no_candidates"
 	}
