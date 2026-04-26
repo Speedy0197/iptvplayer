@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"compress/gzip"
+	"database/sql"
 	"encoding/xml"
 	"fmt"
 	"io"
