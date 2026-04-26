@@ -150,13 +150,112 @@ func fetchVuplusEPGEvents(vuplusIP, vuplusPort, serviceRef string) ([]vuplusEPGE
 	return events.Events, nil
 }
 
+func isNumericUTCOffset(s string) bool {
+	if len(s) != 5 {
+		return false
+	}
+	if s[0] != '+' && s[0] != '-' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeStoredEPGTime(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+
+	parts := strings.Fields(raw)
+	if len(parts) >= 4 && isNumericUTCOffset(parts[2]) {
+		return strings.Join(parts[:3], " ")
+	}
+	if len(parts) == 3 && isNumericUTCOffset(parts[2]) {
+		return strings.Join(parts[:3], " ")
+	}
+	return raw
+}
+
+func parseStoredEPGTime(raw string) (time.Time, error) {
+	normalized := normalizeStoredEPGTime(raw)
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05 -0700",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, normalized); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unable to parse time value %q", raw)
+}
+
+func formatEPGTimeForDB(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
+func scanEPGEntries(rows *sql.Rows, since *time.Time, descending bool, limit int) ([]models.EPGEntry, error) {
+	entries := []models.EPGEntry{}
+	for rows.Next() {
+		var channelID string
+		var startRaw string
+		var endRaw string
+		var title string
+		var description string
+		if err := rows.Scan(&channelID, &startRaw, &endRaw, &title, &description); err != nil {
+			continue
+		}
+
+		startTime, err := parseStoredEPGTime(startRaw)
+		if err != nil {
+			continue
+		}
+		endTime, err := parseStoredEPGTime(endRaw)
+		if err != nil {
+			continue
+		}
+
+		if since != nil && !endTime.After(*since) {
+			continue
+		}
+
+		entries = append(entries, models.EPGEntry{
+			ChannelEpgID: channelID,
+			StartTime:    startTime,
+			EndTime:      endTime,
+			Title:        title,
+			Description:  description,
+		})
+		if limit > 0 && len(entries) >= limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if descending {
+		for left, right := 0, len(entries)-1; left < right; left, right = left+1, right-1 {
+			entries[left], entries[right] = entries[right], entries[left]
+		}
+	}
+
+	return entries, nil
+}
+
 func queryEPGEntriesSince(playlistID int64, channelEpgID string, since time.Time) ([]models.EPGEntry, error) {
 	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
 	rows, err := database.DB.Query(
 		`SELECT channel_epg_id, start_time, end_time, title, description
 		 FROM epg_cache
 		 WHERE playlist_id = ?
-		   AND end_time > ?
 		   AND (
 			 channel_epg_id = ?
 			 OR LOWER(channel_epg_id) = LOWER(?)
@@ -164,9 +263,8 @@ func queryEPGEntriesSince(playlistID int64, channelEpgID string, since time.Time
 			 OR LOWER(channel_epg_id) = LOWER(?)
 		   )
 		 ORDER BY start_time ASC
-		 LIMIT 48`,
+		 LIMIT 256`,
 		playlistID,
-		since,
 		channelEpgID,
 		channelEpgID,
 		normalizedChannelEpgID,
@@ -177,19 +275,7 @@ func queryEPGEntriesSince(playlistID int64, channelEpgID string, since time.Time
 	}
 	defer rows.Close()
 
-	entries := []models.EPGEntry{}
-	for rows.Next() {
-		var e models.EPGEntry
-		if err := rows.Scan(&e.ChannelEpgID, &e.StartTime, &e.EndTime, &e.Title, &e.Description); err != nil {
-			continue
-		}
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return entries, nil
+	return scanEPGEntries(rows, &since, false, 48)
 }
 
 func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, error) {
@@ -221,23 +307,7 @@ func queryLatestEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGE
 	}
 	defer rows.Close()
 
-	reversed := []models.EPGEntry{}
-	for rows.Next() {
-		var e models.EPGEntry
-		if err := rows.Scan(&e.ChannelEpgID, &e.StartTime, &e.EndTime, &e.Title, &e.Description); err != nil {
-			continue
-		}
-		reversed = append(reversed, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	entries := make([]models.EPGEntry, 0, len(reversed))
-	for i := len(reversed) - 1; i >= 0; i-- {
-		entries = append(entries, reversed[i])
-	}
-	return entries, nil
+	return scanEPGEntries(rows, nil, true, 48)
 }
 
 func countEPGEntriesForChannel(playlistID int64, channelEpgID string) (int, error) {
@@ -337,23 +407,13 @@ func (nt *sqlNullTime) parseString(value string) error {
 		return nil
 	}
 
-	layouts := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999",
-		"2006-01-02 15:04:05-07:00",
-		"2006-01-02 15:04:05",
+	parsed, err := parseStoredEPGTime(value)
+	if err != nil {
+		return err
 	}
-	for _, layout := range layouts {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			nt.Time = parsed
-			nt.Valid = true
-			return nil
-		}
-	}
-
-	return fmt.Errorf("unable to parse time value %q", value)
+	nt.Time = parsed
+	nt.Valid = true
+	return nil
 }
 
 func normalizeEPGKey(s string) string {
@@ -769,7 +829,7 @@ func refreshEPG(playlistID int64) {
 			skippedChannel++
 			continue
 		}
-		if _, err := stmt.Exec(channelID, playlistID, start, end, prog.Title.Value, prog.Desc.Value); err != nil {
+		if _, err := stmt.Exec(channelID, playlistID, formatEPGTimeForDB(start), formatEPGTimeForDB(end), prog.Title.Value, prog.Desc.Value); err != nil {
 			log.Printf("EPG insert failed for playlist %d channel %q: %v", playlistID, prog.Channel, err)
 			insertErrors++
 			continue
@@ -889,7 +949,7 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 		}
 
 		// Persist under the requested channel ID so GetEPG lookups stay stable.
-		if _, err := stmt.Exec(channelEpgID, playlistID, start, end, strings.TrimSpace(event.Title), description); err != nil {
+		if _, err := stmt.Exec(channelEpgID, playlistID, formatEPGTimeForDB(start), formatEPGTimeForDB(end), strings.TrimSpace(event.Title), description); err != nil {
 			log.Printf("Vu+ EPG insert failed for playlist %d channel %q: %v", playlistID, channelEpgID, err)
 			insertErrors++
 			continue
