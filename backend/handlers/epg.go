@@ -150,7 +150,7 @@ func fetchVuplusEPGEvents(vuplusIP, vuplusPort, serviceRef string) ([]vuplusEPGE
 	return events.Events, nil
 }
 
-func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, error) {
+func queryEPGEntriesSince(playlistID int64, channelEpgID string, since time.Time) ([]models.EPGEntry, error) {
 	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
 	rows, err := database.DB.Query(
 		`SELECT channel_epg_id, start_time, end_time, title, description
@@ -166,7 +166,7 @@ func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, 
 		 ORDER BY start_time ASC
 		 LIMIT 48`,
 		playlistID,
-		time.Now().Add(-time.Hour),
+		since,
 		channelEpgID,
 		channelEpgID,
 		normalizedChannelEpgID,
@@ -190,6 +190,35 @@ func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, 
 	}
 
 	return entries, nil
+}
+
+func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, error) {
+	return queryEPGEntriesSince(playlistID, channelEpgID, time.Now().Add(-time.Hour))
+}
+
+func countEPGEntriesForChannel(playlistID int64, channelEpgID string) (int, error) {
+	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
+	var count int
+	err := database.DB.QueryRow(
+		`SELECT COUNT(*)
+		 FROM epg_cache
+		 WHERE playlist_id = ?
+		   AND (
+			 channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+			 OR channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+		   )`,
+		playlistID,
+		channelEpgID,
+		channelEpgID,
+		normalizedChannelEpgID,
+		normalizedChannelEpgID,
+	).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func normalizeEPGKey(s string) string {
@@ -429,6 +458,13 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if playlistType != "vuplus" && len(entries) == 0 {
+		totalEntries, countErr := countEPGEntriesForChannel(playlistID, channelEpgID)
+		if countErr != nil {
+			log.Printf("[EPG-DEBUG] GetEPG total count lookup failed playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, countErr)
+		} else {
+			log.Printf("[EPG-DEBUG] GetEPG zero active entries playlist_id=%d channel_epg_id=%q total_exact_entries=%d", playlistID, channelEpgID, totalEntries)
+		}
+
 		aliasID, aliasScore, aliasErr := findEPGAliasChannelID(playlistID, channelEpgID)
 		if aliasErr != nil {
 			log.Printf("[EPG-DEBUG] GetEPG alias lookup failed playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, aliasErr)
@@ -438,6 +474,16 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "db error")
 				return
+			}
+			if len(entries) == 0 {
+				entries, err = queryEPGEntriesSince(playlistID, aliasID, time.Now().Add(-24*time.Hour))
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "db error")
+					return
+				}
+				if len(entries) > 0 {
+					log.Printf("[EPG-DEBUG] GetEPG alias fallback window hit playlist_id=%d alias_channel=%q entries=%d", playlistID, aliasID, len(entries))
+				}
 			}
 		}
 
@@ -460,6 +506,16 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						writeError(w, http.StatusInternalServerError, "db error")
 						return
+					}
+					if len(entries) == 0 {
+						entries, err = queryEPGEntriesSince(playlistID, aliasID, time.Now().Add(-24*time.Hour))
+						if err != nil {
+							writeError(w, http.StatusInternalServerError, "db error")
+							return
+						}
+						if len(entries) > 0 {
+							log.Printf("[EPG-DEBUG] GetEPG alias fallback window hit post-refresh playlist_id=%d alias_channel=%q entries=%d", playlistID, aliasID, len(entries))
+						}
 					}
 				}
 			}
