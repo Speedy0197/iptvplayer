@@ -49,7 +49,31 @@ class HomeLeftMenu extends StatelessWidget {
                 button: true,
                 label: 'Logout',
                 child: InkResponse(
-                  onTap: () => context.read<AuthStore>().logout(),
+                  onTap: () async {
+                    final shouldLogout = await showDialog<bool>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: const Text('Logout'),
+                        content: const Text('Are you sure you want to log out?'),
+                        actions: [
+                          TextButton(
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(false),
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(true),
+                            child: const Text('Logout'),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (shouldLogout == true && context.mounted) {
+                      await context.read<AuthStore>().logout();
+                    }
+                  },
                   radius: 24,
                   child: const Padding(
                     padding: EdgeInsets.all(12),

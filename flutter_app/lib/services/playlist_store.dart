@@ -243,6 +243,33 @@ class PlaylistStore extends ChangeNotifier {
             .map((e) => Channel.fromJson(e as Map<String, dynamic>)),
         channelSortOrder,
       );
+
+      if (kDebugMode) {
+        final withLogo = channels.where((c) => c.logoUrl.isNotEmpty).length;
+        final withoutLogo = channels.length - withLogo;
+        final sampleWithLogo = channels
+            .where((c) => c.logoUrl.isNotEmpty)
+            .take(5)
+            .map((c) => '${c.name} => ${c.logoUrl}')
+            .join(' | ');
+        final sampleWithoutLogo = channels
+            .where((c) => c.logoUrl.isEmpty)
+            .take(5)
+            .map((c) => c.name)
+            .join(', ');
+
+        debugPrint(
+          '[channels][logos] playlist=$playlistId group=${group ?? 'ALL'} total=${channels.length} with_logo=$withLogo without_logo=$withoutLogo',
+        );
+        if (sampleWithLogo.isNotEmpty) {
+          debugPrint('[channels][logos] sample_with_logo: $sampleWithLogo');
+        }
+        if (sampleWithoutLogo.isNotEmpty) {
+          debugPrint(
+            '[channels][logos] sample_without_logo: $sampleWithoutLogo',
+          );
+        }
+      }
     } finally {
       loadingChannels = false;
       notifyListeners();

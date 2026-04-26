@@ -20,6 +20,10 @@ class ChannelLogoAvatar extends StatelessWidget {
     );
 
     if (logoUrl.isEmpty) {
+      assert(() {
+        debugPrint('[channel-logo] empty logoUrl, using fallback icon');
+        return true;
+      }());
       return fallback;
     }
 
@@ -30,7 +34,15 @@ class ChannelLogoAvatar extends StatelessWidget {
         child: Image.network(
           logoUrl,
           fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => fallback,
+          errorBuilder: (context, error, stackTrace) {
+            assert(() {
+              debugPrint(
+                '[channel-logo] failed loading logo url=$logoUrl error=$error',
+              );
+              return true;
+            }());
+            return fallback;
+          },
         ),
       ),
     );

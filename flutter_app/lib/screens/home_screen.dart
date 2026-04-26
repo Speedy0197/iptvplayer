@@ -119,6 +119,30 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _requestLogoutConfirmation() async {
+    final shouldLogout = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to log out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldLogout == true && mounted) {
+      await context.read<AuthStore>().logout();
+    }
+  }
+
   void _cleanupSearch() {
     _searchCtrl.clear();
     if (mounted) {
@@ -728,9 +752,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     child: BottomNavigationBar(
                       currentIndex: HomeSection.values.indexOf(_section),
-                      onTap: (index) {
+                      onTap: (index) async {
                         if (isSmallCompact && index == 3) {
-                          context.read<AuthStore>().logout();
+                          await _requestLogoutConfirmation();
                           return;
                         }
                         _handleSectionChange(HomeSection.values[index]);
