@@ -196,6 +196,50 @@ func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, 
 	return queryEPGEntriesSince(playlistID, channelEpgID, time.Now().Add(-time.Hour))
 }
 
+func queryLatestEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, error) {
+	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
+	rows, err := database.DB.Query(
+		`SELECT channel_epg_id, start_time, end_time, title, description
+		 FROM epg_cache
+		 WHERE playlist_id = ?
+		   AND (
+			 channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+			 OR channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+		   )
+		 ORDER BY start_time DESC
+		 LIMIT 48`,
+		playlistID,
+		channelEpgID,
+		channelEpgID,
+		normalizedChannelEpgID,
+		normalizedChannelEpgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	reversed := []models.EPGEntry{}
+	for rows.Next() {
+		var e models.EPGEntry
+		if err := rows.Scan(&e.ChannelEpgID, &e.StartTime, &e.EndTime, &e.Title, &e.Description); err != nil {
+			continue
+		}
+		reversed = append(reversed, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	entries := make([]models.EPGEntry, 0, len(reversed))
+	for i := len(reversed) - 1; i >= 0; i-- {
+		entries = append(entries, reversed[i])
+	}
+	return entries, nil
+}
+
 func countEPGEntriesForChannel(playlistID int64, channelEpgID string) (int, error) {
 	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
 	var count int
@@ -219,6 +263,97 @@ func countEPGEntriesForChannel(playlistID int64, channelEpgID string) (int, erro
 		return 0, err
 	}
 	return count, nil
+}
+
+func getEPGTimeBoundsForChannel(playlistID int64, channelEpgID string) (*time.Time, *time.Time, error) {
+	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
+	var minStart sqlNullTime
+	var maxEnd sqlNullTime
+	err := database.DB.QueryRow(
+		`SELECT MIN(start_time), MAX(end_time)
+		 FROM epg_cache
+		 WHERE playlist_id = ?
+		   AND (
+			 channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+			 OR channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+		   )`,
+		playlistID,
+		channelEpgID,
+		channelEpgID,
+		normalizedChannelEpgID,
+		normalizedChannelEpgID,
+	).Scan(&minStart, &maxEnd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var startPtr *time.Time
+	var endPtr *time.Time
+	if minStart.Valid {
+		startVal := minStart.Time
+		startPtr = &startVal
+	}
+	if maxEnd.Valid {
+		endVal := maxEnd.Time
+		endPtr = &endVal
+	}
+
+	return startPtr, endPtr, nil
+}
+
+type sqlNullTime struct {
+	Time  time.Time
+	Valid bool
+}
+
+func (nt *sqlNullTime) Scan(value any) error {
+	if value == nil {
+		nt.Time = time.Time{}
+		nt.Valid = false
+		return nil
+	}
+
+	switch v := value.(type) {
+	case time.Time:
+		nt.Time = v
+		nt.Valid = true
+		return nil
+	case string:
+		return nt.parseString(v)
+	case []byte:
+		return nt.parseString(string(v))
+	default:
+		return fmt.Errorf("unsupported time scan type %T", value)
+	}
+}
+
+func (nt *sqlNullTime) parseString(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		nt.Time = time.Time{}
+		nt.Valid = false
+		return nil
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			nt.Time = parsed
+			nt.Valid = true
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unable to parse time value %q", value)
 }
 
 func normalizeEPGKey(s string) string {
@@ -463,6 +598,14 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[EPG-DEBUG] GetEPG total count lookup failed playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, countErr)
 		} else {
 			log.Printf("[EPG-DEBUG] GetEPG zero active entries playlist_id=%d channel_epg_id=%q total_exact_entries=%d", playlistID, channelEpgID, totalEntries)
+			if totalEntries > 0 {
+				minStart, maxEnd, boundsErr := getEPGTimeBoundsForChannel(playlistID, channelEpgID)
+				if boundsErr != nil {
+					log.Printf("[EPG-DEBUG] GetEPG time bounds lookup failed playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, boundsErr)
+				} else if minStart != nil && maxEnd != nil {
+					log.Printf("[EPG-DEBUG] GetEPG cached time bounds playlist_id=%d channel_epg_id=%q min_start=%s max_end=%s now=%s", playlistID, channelEpgID, minStart.Format(time.RFC3339), maxEnd.Format(time.RFC3339), time.Now().Format(time.RFC3339))
+				}
+			}
 		}
 
 		aliasID, aliasScore, aliasErr := findEPGAliasChannelID(playlistID, channelEpgID)
@@ -484,6 +627,17 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 				if len(entries) > 0 {
 					log.Printf("[EPG-DEBUG] GetEPG alias fallback window hit playlist_id=%d alias_channel=%q entries=%d", playlistID, aliasID, len(entries))
 				}
+			}
+		}
+
+		if len(entries) == 0 && totalEntries > 0 {
+			entries, err = queryLatestEPGEntries(playlistID, channelEpgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "db error")
+				return
+			}
+			if len(entries) > 0 {
+				log.Printf("[EPG-DEBUG] GetEPG latest-entry fallback hit playlist_id=%d channel_epg_id=%q entries=%d", playlistID, channelEpgID, len(entries))
 			}
 		}
 
