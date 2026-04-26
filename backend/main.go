@@ -63,9 +63,6 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth)
 
-			// Stream proxy — uses ?token= so hls.js/mpegts.js can call it without custom headers
-			r.Get("/proxy", handlers.ProxyStream)
-
 			// Playlists
 			r.Get("/playlists", handlers.ListPlaylists)
 			r.Post("/playlists", handlers.CreatePlaylist)
