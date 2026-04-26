@@ -241,7 +241,6 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 
 	epq := url.QueryEscape(channelEpgID)
 	epqURL := fmt.Sprintf("http://%s:%s/web/epgservice?sRef=%s", vuplusIP, vuplusPort, epq)
-	log.Printf("[TEMP DEBUG] Vu+ EPG request playlist=%d channel=%q url=%s", playlistID, channelEpgID, epqURL)
 
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Get(epqURL)
@@ -293,7 +292,6 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 	}
 	defer stmt.Close()
 
-	insertedCount := 0
 	for _, event := range events.Events {
 		startUnix, err := strconv.ParseInt(strings.TrimSpace(event.Start), 10, 64)
 		if err != nil {
@@ -327,9 +325,7 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 			log.Printf("Vu+ EPG insert failed for playlist %d channel %q: %v", playlistID, eventChannelID, err)
 			continue
 		}
-		insertedCount++
 	}
-	log.Printf("[TEMP DEBUG] Vu+ EPG parsed playlist=%d channel=%q events=%d inserted=%d", playlistID, channelEpgID, len(events.Events), insertedCount)
 
 	if _, err := tx.Exec(
 		`INSERT OR REPLACE INTO epg_fetch_log (playlist_id, fetched_at) VALUES (?, ?)`,

@@ -1,14 +1,11 @@
 package providers
 
 import (
-	"context"
 	"encoding/xml"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/flodev/iptvplayer/models"
 )
@@ -38,11 +35,6 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 
 	var channels []models.Channel
 	sortOrder := 0
-	piconClient := &http.Client{Timeout: 1500 * time.Millisecond}
-	const debugPiconLimit = 30
-	debuggedPicon := 0
-	piconProbedOk := 0
-	piconProbedFail := 0
 
 	for _, bouquet := range bouquets {
 		ref := strings.TrimSpace(bouquet.Reference)
@@ -77,28 +69,6 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 				logoURL = vuplusGetPiconURL(base, canonicalSvcRef)
 			}
 
-			attemptDebug := "not_probed"
-			if debuggedPicon < debugPiconLimit {
-				if ok, status := urlReachable(piconClient, logoURL); ok {
-					attemptDebug = fmt.Sprintf("probe:%s", status)
-					piconProbedOk++
-				} else {
-					attemptDebug = fmt.Sprintf("probe:%s", status)
-					piconProbedFail++
-				}
-			}
-			if debuggedPicon < debugPiconLimit {
-				log.Printf("[vuplus][picon] playlist=%d channel=%q sRef=%q canonical=%q selected=%q attempts=%s",
-					playlistID,
-					svcName,
-					svcRef,
-					canonicalSvcRef,
-					logoURL,
-					attemptDebug,
-				)
-				debuggedPicon++
-			}
-
 			channels = append(channels, models.Channel{
 				PlaylistID: playlistID,
 				StreamID:   svcRef,
@@ -112,15 +82,6 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 			sortOrder++
 		}
 	}
-
-	log.Printf("[vuplus][picon] playlist=%d summary channels=%d assigned_logo=%d debugged=%d probe_ok=%d probe_fail=%d",
-		playlistID,
-		len(channels),
-		len(channels),
-		debuggedPicon,
-		piconProbedOk,
-		piconProbedFail,
-	)
 
 	return channels, nil
 }
@@ -137,13 +98,6 @@ func fetchE2Services(rawURL string) ([]e2Service, error) {
 		return nil, err
 	}
 	return list.Services, nil
-}
-
-func piconName(sRef string) string {
-	s := sRef
-	s = strings.ReplaceAll(s, ":", "_")
-	s = strings.TrimRight(s, "_")
-	return s
 }
 
 // normalizeVuplusServiceRef keeps only the canonical Enigma2 service fields.
@@ -170,61 +124,4 @@ func vuplusGetPiconURL(base, sRef string) string {
 	}
 
 	return fmt.Sprintf("%s/web/getpicon?sRef=%s", base, url.QueryEscape(trimmedRef))
-}
-
-func urlReachable(client *http.Client, rawURL string) (bool, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
-
-	headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
-	if err == nil {
-		if resp, reqErr := client.Do(headReq); reqErr == nil {
-			resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				if isImageContentType(resp.Header.Get("Content-Type")) {
-					return true, fmt.Sprintf("HEAD %d %s", resp.StatusCode, strings.TrimSpace(resp.Header.Get("Content-Type")))
-				}
-				return false, fmt.Sprintf("HEAD %d non-image %s", resp.StatusCode, strings.TrimSpace(resp.Header.Get("Content-Type")))
-			}
-			if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotImplemented {
-				return false, fmt.Sprintf("HEAD %d", resp.StatusCode)
-			}
-		} else {
-			return false, fmt.Sprintf("HEAD error: %v", reqErr)
-		}
-	} else {
-		return false, fmt.Sprintf("HEAD request error: %v", err)
-	}
-
-	ctxGet, cancelGet := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancelGet()
-
-	getReq, err := http.NewRequestWithContext(ctxGet, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return false, fmt.Sprintf("GET request error: %v", err)
-	}
-	getReq.Header.Set("Range", "bytes=0-0")
-
-	resp, err := client.Do(getReq)
-	if err != nil {
-		return false, fmt.Sprintf("GET error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if isImageContentType(resp.Header.Get("Content-Type")) {
-			return true, fmt.Sprintf("GET %d %s", resp.StatusCode, strings.TrimSpace(resp.Header.Get("Content-Type")))
-		}
-		return false, fmt.Sprintf("GET %d non-image %s", resp.StatusCode, strings.TrimSpace(resp.Header.Get("Content-Type")))
-	}
-
-	return false, fmt.Sprintf("GET %d", resp.StatusCode)
-}
-
-func isImageContentType(contentType string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(contentType))
-	if trimmed == "" {
-		return false
-	}
-	return strings.HasPrefix(trimmed, "image/")
 }
