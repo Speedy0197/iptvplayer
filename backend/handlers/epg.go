@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/flodev/iptvplayer/database"
 	"github.com/flodev/iptvplayer/middleware"
@@ -191,6 +192,184 @@ func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, 
 	return entries, nil
 }
 
+func normalizeEPGKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func epgKeyTokens(s string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(s)), func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r))
+	})
+
+	stop := map[string]struct{}{
+		"de":  {},
+		"com": {},
+		"net": {},
+		"org": {},
+		"tv":  {},
+		"hd":  {},
+		"uhd": {},
+		"sd":  {},
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) < 2 {
+			continue
+		}
+		if _, isStop := stop[p]; isStop {
+			continue
+		}
+		if _, exists := seen[p]; exists {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+
+	return out
+}
+
+func scoreEPGAliasCandidate(requestedID, channelName, candidateID string) int {
+	candidate := strings.TrimSpace(candidateID)
+	if candidate == "" {
+		return 0
+	}
+
+	req := strings.TrimSpace(requestedID)
+	name := strings.TrimSpace(channelName)
+
+	normCand := normalizeEPGKey(candidate)
+	targets := []string{req}
+	if name != "" {
+		targets = append(targets, name)
+	}
+
+	best := 0
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+
+		if strings.EqualFold(candidate, target) {
+			if 1000 > best {
+				best = 1000
+			}
+			continue
+		}
+
+		normTarget := normalizeEPGKey(target)
+		if normTarget == "" {
+			continue
+		}
+
+		if normCand == normTarget {
+			if 900 > best {
+				best = 900
+			}
+			continue
+		}
+
+		if len(normTarget) >= 4 && (strings.Contains(normCand, normTarget) || strings.Contains(normTarget, normCand)) {
+			score := 700 - absInt(len(normCand)-len(normTarget))
+			if score > best {
+				best = score
+			}
+		}
+
+		tokensTarget := epgKeyTokens(target)
+		tokensCand := epgKeyTokens(candidate)
+		if len(tokensTarget) == 0 || len(tokensCand) == 0 {
+			continue
+		}
+
+		candSet := map[string]struct{}{}
+		for _, t := range tokensCand {
+			candSet[t] = struct{}{}
+		}
+
+		overlap := 0
+		for _, t := range tokensTarget {
+			if _, ok := candSet[t]; ok {
+				overlap++
+			}
+		}
+		if overlap > 0 {
+			score := overlap * 120
+			if score > best {
+				best = score
+			}
+		}
+	}
+
+	return best
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func findEPGAliasChannelID(playlistID int64, requestedID string) (string, int, error) {
+	requestedID = strings.TrimSpace(requestedID)
+	if requestedID == "" {
+		return "", 0, nil
+	}
+
+	channelName := ""
+	if err := database.DB.QueryRow(
+		`SELECT COALESCE(name, '') FROM channels WHERE playlist_id = ? AND (epg_channel_id = ? OR LOWER(epg_channel_id) = LOWER(?)) LIMIT 1`,
+		playlistID, requestedID, requestedID,
+	).Scan(&channelName); err != nil && err.Error() != "sql: no rows in result set" {
+		return "", 0, err
+	}
+
+	rows, err := database.DB.Query(
+		`SELECT DISTINCT channel_epg_id
+		 FROM epg_cache
+		 WHERE playlist_id = ? AND end_time > ?`,
+		playlistID, time.Now().Add(-24*time.Hour),
+	)
+	if err != nil {
+		return "", 0, err
+	}
+	defer rows.Close()
+
+	bestID := ""
+	bestScore := 0
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			continue
+		}
+		score := scoreEPGAliasCandidate(requestedID, channelName, candidate)
+		if score > bestScore {
+			bestScore = score
+			bestID = candidate
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", 0, err
+	}
+
+	if bestScore < 180 {
+		return "", bestScore, nil
+	}
+
+	return bestID, bestScore, nil
+}
+
 func GetEPG(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	playlistID, err := strconv.ParseInt(chi.URLParam(r, "playlist_id"), 10, 64)
@@ -219,6 +398,7 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[EPG-DEBUG] GetEPG playlist_id=%d type=%s", playlistID, playlistType)
 
+	didRefresh := false
 	if playlistType == "vuplus" {
 		refreshVuplusEPGForChannel(playlistID, channelEpgID)
 	} else {
@@ -237,6 +417,7 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 		if time.Since(fetchedAt) > epgCacheTTL {
 			log.Printf("[EPG-DEBUG] GetEPG playlist_id=%d triggering refreshEPG (stale or empty cache)", playlistID)
 			refreshEPG(playlistID)
+			didRefresh = true
 		}
 	}
 
@@ -248,14 +429,47 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if playlistType != "vuplus" && len(entries) == 0 {
-		log.Printf("[EPG-DEBUG] GetEPG empty result for non-vuplus playlist_id=%d channel_epg_id=%q, forcing refreshEPG once", playlistID, channelEpgID)
-		refreshEPG(playlistID)
-		entries, err = queryEPGEntries(playlistID, channelEpgID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "db error")
-			return
+		aliasID, aliasScore, aliasErr := findEPGAliasChannelID(playlistID, channelEpgID)
+		if aliasErr != nil {
+			log.Printf("[EPG-DEBUG] GetEPG alias lookup failed playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, aliasErr)
+		} else if aliasID != "" {
+			log.Printf("[EPG-DEBUG] GetEPG alias match playlist_id=%d requested_channel=%q alias_channel=%q score=%d", playlistID, channelEpgID, aliasID, aliasScore)
+			entries, err = queryEPGEntries(playlistID, aliasID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "db error")
+				return
+			}
 		}
-		log.Printf("[EPG-DEBUG] GetEPG post-refresh result playlist_id=%d channel_epg_id=%q entries=%d", playlistID, channelEpgID, len(entries))
+
+		if len(entries) == 0 && !didRefresh {
+			log.Printf("[EPG-DEBUG] GetEPG empty result for non-vuplus playlist_id=%d channel_epg_id=%q, forcing refreshEPG once", playlistID, channelEpgID)
+			refreshEPG(playlistID)
+			entries, err = queryEPGEntries(playlistID, channelEpgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "db error")
+				return
+			}
+
+			if len(entries) == 0 {
+				aliasID, aliasScore, aliasErr = findEPGAliasChannelID(playlistID, channelEpgID)
+				if aliasErr != nil {
+					log.Printf("[EPG-DEBUG] GetEPG alias lookup failed post-refresh playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, aliasErr)
+				} else if aliasID != "" {
+					log.Printf("[EPG-DEBUG] GetEPG alias match post-refresh playlist_id=%d requested_channel=%q alias_channel=%q score=%d", playlistID, channelEpgID, aliasID, aliasScore)
+					entries, err = queryEPGEntries(playlistID, aliasID)
+					if err != nil {
+						writeError(w, http.StatusInternalServerError, "db error")
+						return
+					}
+				}
+			}
+		}
+
+		if !didRefresh {
+			log.Printf("[EPG-DEBUG] GetEPG post-refresh result playlist_id=%d channel_epg_id=%q entries=%d", playlistID, channelEpgID, len(entries))
+		} else {
+			log.Printf("[EPG-DEBUG] GetEPG post-alias result playlist_id=%d channel_epg_id=%q entries=%d", playlistID, channelEpgID, len(entries))
+		}
 	}
 
 	log.Printf("[EPG-DEBUG] GetEPG result playlist_id=%d requested_channel=%q normalized_channel=%q entries=%d", playlistID, channelEpgID, normalizedChannelEpgID, len(entries))
