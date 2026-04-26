@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -53,16 +55,98 @@ type vuplusEPGEvent struct {
 var xmltvLayouts = []string{
 	"20060102150405 -0700",
 	"20060102150405 +0000",
+	"20060102150405-0700",
+	"20060102150405+0000",
 	"20060102150405",
+	time.RFC3339,
 }
 
 func parseXMLTVTime(s string) (time.Time, error) {
+	raw := strings.TrimSpace(s)
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("cannot parse empty time")
+	}
+
+	// XMLTV often appends timezone names, e.g. "20260102150405 +0200 CET".
+	fields := strings.Fields(raw)
+	if len(fields) >= 2 {
+		raw = fields[0] + " " + fields[1]
+	} else {
+		raw = fields[0]
+	}
+
 	for _, layout := range xmltvLayouts {
-		if t, err := time.Parse(layout, s); err == nil {
+		if t, err := time.Parse(layout, raw); err == nil {
 			return t, nil
 		}
 	}
 	return time.Time{}, fmt.Errorf("cannot parse time: %s", s)
+}
+
+func normalizeVuplusServiceRef(sRef string) string {
+	trimmed := strings.TrimSpace(sRef)
+	if trimmed == "" {
+		return ""
+	}
+
+	parts := strings.Split(trimmed, ":")
+	if len(parts) >= 10 {
+		return strings.Join(parts[:10], ":") + ":"
+	}
+
+	return trimmed
+}
+
+func readPossiblyGzippedBody(r io.Reader, contentEncoding string) ([]byte, error) {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+
+	isGzip := strings.Contains(strings.ToLower(contentEncoding), "gzip") ||
+		bytes.HasPrefix(body, []byte{0x1f, 0x8b})
+	if !isGzip {
+		return body, nil
+	}
+
+	gz, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	return io.ReadAll(gz)
+}
+
+func fetchVuplusEPGEvents(vuplusIP, vuplusPort, serviceRef string) ([]vuplusEPGEvent, error) {
+	epqURL := fmt.Sprintf(
+		"http://%s:%s/web/epgservice?sRef=%s",
+		vuplusIP,
+		vuplusPort,
+		url.QueryEscape(serviceRef),
+	)
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(epqURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	body, err := readPossiblyGzippedBody(resp.Body, resp.Header.Get("Content-Encoding"))
+	if err != nil {
+		return nil, err
+	}
+
+	var events vuplusEPGList
+	if err := xml.Unmarshal(body, &events); err != nil {
+		return nil, err
+	}
+
+	return events.Events, nil
 }
 
 func GetEPG(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +163,8 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[EPG-DEBUG] GetEPG request user_id=%d playlist_id=%d channel_epg_id=%q", userID, playlistID, channelEpgID)
+
 	if _, ok := ownsPlaylist(userID, playlistID); !ok {
 		writeError(w, http.StatusNotFound, "playlist not found")
 		return
@@ -89,28 +175,49 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	log.Printf("[EPG-DEBUG] GetEPG playlist_id=%d type=%s", playlistID, playlistType)
 
 	if playlistType == "vuplus" {
 		refreshVuplusEPGForChannel(playlistID, channelEpgID)
 	} else {
 		// Refresh EPG if cache is stale
 		var fetchedAt time.Time
-		database.DB.QueryRow(
+		if err := database.DB.QueryRow(
 			`SELECT fetched_at FROM epg_fetch_log WHERE playlist_id = ?`, playlistID,
-		).Scan(&fetchedAt)
+		).Scan(&fetchedAt); err != nil {
+			log.Printf("[EPG-DEBUG] GetEPG playlist_id=%d no previous fetch log (or lookup error): %v", playlistID, err)
+		}
+
+		if !fetchedAt.IsZero() {
+			log.Printf("[EPG-DEBUG] GetEPG playlist_id=%d last_fetched_at=%s age=%s", playlistID, fetchedAt.Format(time.RFC3339), time.Since(fetchedAt).Round(time.Second))
+		}
 
 		if time.Since(fetchedAt) > epgCacheTTL {
+			log.Printf("[EPG-DEBUG] GetEPG playlist_id=%d triggering refreshEPG (stale or empty cache)", playlistID)
 			refreshEPG(playlistID)
 		}
 	}
 
+	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
 	rows, err := database.DB.Query(
 		`SELECT channel_epg_id, start_time, end_time, title, description
 		 FROM epg_cache
-		 WHERE playlist_id = ? AND channel_epg_id = ? AND end_time > ?
+		 WHERE playlist_id = ?
+		   AND end_time > ?
+		   AND (
+			 channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+			 OR channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+		   )
 		 ORDER BY start_time ASC
 		 LIMIT 48`,
-		playlistID, channelEpgID, time.Now().Add(-time.Hour),
+		playlistID,
+		time.Now().Add(-time.Hour),
+		channelEpgID,
+		channelEpgID,
+		normalizedChannelEpgID,
+		normalizedChannelEpgID,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
@@ -126,6 +233,10 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 		}
 		entries = append(entries, e)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[EPG-DEBUG] GetEPG rows iteration error playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, err)
+	}
+	log.Printf("[EPG-DEBUG] GetEPG result playlist_id=%d requested_channel=%q normalized_channel=%q entries=%d", playlistID, channelEpgID, normalizedChannelEpgID, len(entries))
 	writeJSON(w, http.StatusOK, entries)
 }
 
@@ -142,6 +253,7 @@ func refreshEPG(playlistID int64) {
 		return
 	}
 	epgURL = strings.TrimSpace(epgURL)
+	log.Printf("[EPG-DEBUG] refreshEPG start playlist_id=%d epg_url=%q", playlistID, epgURL)
 
 	resp, err := http.Get(epgURL)
 	if err != nil {
@@ -153,8 +265,9 @@ func refreshEPG(playlistID int64) {
 		log.Printf("EPG fetch failed for playlist %d: unexpected status %d", playlistID, resp.StatusCode)
 		return
 	}
+	log.Printf("[EPG-DEBUG] refreshEPG fetch playlist_id=%d status=%d content_encoding=%q", playlistID, resp.StatusCode, resp.Header.Get("Content-Encoding"))
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readPossiblyGzippedBody(resp.Body, resp.Header.Get("Content-Encoding"))
 	if err != nil {
 		log.Printf("EPG read failed for playlist %d: %v", playlistID, err)
 		return
@@ -165,6 +278,7 @@ func refreshEPG(playlistID int64) {
 		log.Printf("EPG parse failed for playlist %d: %v", playlistID, err)
 		return
 	}
+	log.Printf("[EPG-DEBUG] refreshEPG parsed playlist_id=%d body_bytes=%d programmes=%d", playlistID, len(body), len(tv.Programmes))
 
 	tx, err := database.DB.Begin()
 	if err != nil {
@@ -188,23 +302,35 @@ func refreshEPG(playlistID int64) {
 	}
 	defer stmt.Close()
 
+	inserted := 0
+	skippedStart := 0
+	skippedStop := 0
+	skippedChannel := 0
+	insertErrors := 0
 	for _, prog := range tv.Programmes {
 		start, err := parseXMLTVTime(prog.Start)
 		if err != nil {
+			skippedStart++
 			continue
 		}
 		end, err := parseXMLTVTime(prog.Stop)
 		if err != nil {
+			skippedStop++
 			continue
 		}
 		channelID := strings.TrimSpace(prog.Channel)
 		if channelID == "" {
+			skippedChannel++
 			continue
 		}
 		if _, err := stmt.Exec(channelID, playlistID, start, end, prog.Title.Value, prog.Desc.Value); err != nil {
 			log.Printf("EPG insert failed for playlist %d channel %q: %v", playlistID, prog.Channel, err)
+			insertErrors++
+			continue
 		}
+		inserted++
 	}
+	log.Printf("[EPG-DEBUG] refreshEPG insert stats playlist_id=%d inserted=%d skipped_start=%d skipped_stop=%d skipped_channel=%d insert_errors=%d", playlistID, inserted, skippedStart, skippedStop, skippedChannel, insertErrors)
 
 	if _, err := tx.Exec(
 		`INSERT OR REPLACE INTO epg_fetch_log (playlist_id, fetched_at) VALUES (?, ?)`,
@@ -216,7 +342,9 @@ func refreshEPG(playlistID int64) {
 
 	if err := tx.Commit(); err != nil {
 		log.Printf("EPG commit failed for playlist %d: %v", playlistID, err)
+		return
 	}
+	log.Printf("[EPG-DEBUG] refreshEPG done playlist_id=%d", playlistID)
 }
 
 func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
@@ -238,32 +366,27 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 	if vuplusPort == "" {
 		vuplusPort = "80"
 	}
+	log.Printf("[EPG-DEBUG] refreshVuplusEPGForChannel start playlist_id=%d host=%s:%s channel_epg_id=%q", playlistID, vuplusIP, vuplusPort, channelEpgID)
 
-	epq := url.QueryEscape(channelEpgID)
-	epqURL := fmt.Sprintf("http://%s:%s/web/epgservice?sRef=%s", vuplusIP, vuplusPort, epq)
-
-	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Get(epqURL)
+	events, err := fetchVuplusEPGEvents(vuplusIP, vuplusPort, channelEpgID)
 	if err != nil {
 		log.Printf("Vu+ EPG fetch failed for playlist %d channel %q: %v", playlistID, channelEpgID, err)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		log.Printf("Vu+ EPG fetch failed for playlist %d channel %q: unexpected status %d", playlistID, channelEpgID, resp.StatusCode)
-		return
-	}
+	log.Printf("[EPG-DEBUG] Vu+ primary fetch playlist_id=%d channel_epg_id=%q events=%d", playlistID, channelEpgID, len(events))
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Vu+ EPG read failed for playlist %d channel %q: %v", playlistID, channelEpgID, err)
-		return
-	}
-
-	var events vuplusEPGList
-	if err := xml.Unmarshal(body, &events); err != nil {
-		log.Printf("Vu+ EPG parse failed for playlist %d channel %q: %v", playlistID, channelEpgID, err)
-		return
+	if len(events) == 0 {
+		normalizedRef := normalizeVuplusServiceRef(channelEpgID)
+		if normalizedRef != "" && normalizedRef != channelEpgID {
+			log.Printf("[EPG-DEBUG] Vu+ fallback fetch playlist_id=%d original_ref=%q normalized_ref=%q", playlistID, channelEpgID, normalizedRef)
+			fallbackEvents, fallbackErr := fetchVuplusEPGEvents(vuplusIP, vuplusPort, normalizedRef)
+			if fallbackErr == nil {
+				events = fallbackEvents
+				log.Printf("[EPG-DEBUG] Vu+ fallback fetch success playlist_id=%d normalized_ref=%q events=%d", playlistID, normalizedRef, len(events))
+			} else {
+				log.Printf("[EPG-DEBUG] Vu+ fallback fetch failed playlist_id=%d normalized_ref=%q err=%v", playlistID, normalizedRef, fallbackErr)
+			}
+		}
 	}
 
 	tx, err := database.DB.Begin()
@@ -292,26 +415,24 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 	}
 	defer stmt.Close()
 
-	for _, event := range events.Events {
+	inserted := 0
+	skippedStart := 0
+	skippedDuration := 0
+	insertErrors := 0
+	for _, event := range events {
 		startUnix, err := strconv.ParseInt(strings.TrimSpace(event.Start), 10, 64)
 		if err != nil {
+			skippedStart++
 			continue
 		}
 		durationSec, err := strconv.ParseInt(strings.TrimSpace(event.Duration), 10, 64)
 		if err != nil || durationSec <= 0 {
+			skippedDuration++
 			continue
 		}
 
 		start := time.Unix(startUnix, 0)
 		end := start.Add(time.Duration(durationSec) * time.Second)
-
-		eventChannelID := strings.TrimSpace(event.ServiceReference)
-		if eventChannelID == "" {
-			eventChannelID = channelEpgID
-		}
-		if eventChannelID != channelEpgID {
-			continue
-		}
 
 		description := strings.TrimSpace(event.Description)
 		extended := strings.TrimSpace(event.DescriptionExtended)
@@ -321,11 +442,15 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 			description = description + "\n\n" + extended
 		}
 
-		if _, err := stmt.Exec(eventChannelID, playlistID, start, end, strings.TrimSpace(event.Title), description); err != nil {
-			log.Printf("Vu+ EPG insert failed for playlist %d channel %q: %v", playlistID, eventChannelID, err)
+		// Persist under the requested channel ID so GetEPG lookups stay stable.
+		if _, err := stmt.Exec(channelEpgID, playlistID, start, end, strings.TrimSpace(event.Title), description); err != nil {
+			log.Printf("Vu+ EPG insert failed for playlist %d channel %q: %v", playlistID, channelEpgID, err)
+			insertErrors++
 			continue
 		}
+		inserted++
 	}
+	log.Printf("[EPG-DEBUG] Vu+ insert stats playlist_id=%d channel_epg_id=%q source_events=%d inserted=%d skipped_start=%d skipped_duration=%d insert_errors=%d", playlistID, channelEpgID, len(events), inserted, skippedStart, skippedDuration, insertErrors)
 
 	if _, err := tx.Exec(
 		`INSERT OR REPLACE INTO epg_fetch_log (playlist_id, fetched_at) VALUES (?, ?)`,
@@ -337,5 +462,7 @@ func refreshVuplusEPGForChannel(playlistID int64, channelEpgID string) {
 
 	if err := tx.Commit(); err != nil {
 		log.Printf("Vu+ EPG commit failed for playlist %d: %v", playlistID, err)
+		return
 	}
+	log.Printf("[EPG-DEBUG] refreshVuplusEPGForChannel done playlist_id=%d channel_epg_id=%q", playlistID, channelEpgID)
 }
