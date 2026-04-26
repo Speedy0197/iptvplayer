@@ -149,6 +149,48 @@ func fetchVuplusEPGEvents(vuplusIP, vuplusPort, serviceRef string) ([]vuplusEPGE
 	return events.Events, nil
 }
 
+func queryEPGEntries(playlistID int64, channelEpgID string) ([]models.EPGEntry, error) {
+	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
+	rows, err := database.DB.Query(
+		`SELECT channel_epg_id, start_time, end_time, title, description
+		 FROM epg_cache
+		 WHERE playlist_id = ?
+		   AND end_time > ?
+		   AND (
+			 channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+			 OR channel_epg_id = ?
+			 OR LOWER(channel_epg_id) = LOWER(?)
+		   )
+		 ORDER BY start_time ASC
+		 LIMIT 48`,
+		playlistID,
+		time.Now().Add(-time.Hour),
+		channelEpgID,
+		channelEpgID,
+		normalizedChannelEpgID,
+		normalizedChannelEpgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := []models.EPGEntry{}
+	for rows.Next() {
+		var e models.EPGEntry
+		if err := rows.Scan(&e.ChannelEpgID, &e.StartTime, &e.EndTime, &e.Title, &e.Description); err != nil {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
 func GetEPG(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	playlistID, err := strconv.ParseInt(chi.URLParam(r, "playlist_id"), 10, 64)
@@ -199,43 +241,23 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalizedChannelEpgID := normalizeVuplusServiceRef(channelEpgID)
-	rows, err := database.DB.Query(
-		`SELECT channel_epg_id, start_time, end_time, title, description
-		 FROM epg_cache
-		 WHERE playlist_id = ?
-		   AND end_time > ?
-		   AND (
-			 channel_epg_id = ?
-			 OR LOWER(channel_epg_id) = LOWER(?)
-			 OR channel_epg_id = ?
-			 OR LOWER(channel_epg_id) = LOWER(?)
-		   )
-		 ORDER BY start_time ASC
-		 LIMIT 48`,
-		playlistID,
-		time.Now().Add(-time.Hour),
-		channelEpgID,
-		channelEpgID,
-		normalizedChannelEpgID,
-		normalizedChannelEpgID,
-	)
+	entries, err := queryEPGEntries(playlistID, channelEpgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	defer rows.Close()
 
-	entries := []models.EPGEntry{}
-	for rows.Next() {
-		var e models.EPGEntry
-		if err := rows.Scan(&e.ChannelEpgID, &e.StartTime, &e.EndTime, &e.Title, &e.Description); err != nil {
-			continue
+	if playlistType != "vuplus" && len(entries) == 0 {
+		log.Printf("[EPG-DEBUG] GetEPG empty result for non-vuplus playlist_id=%d channel_epg_id=%q, forcing refreshEPG once", playlistID, channelEpgID)
+		refreshEPG(playlistID)
+		entries, err = queryEPGEntries(playlistID, channelEpgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
 		}
-		entries = append(entries, e)
+		log.Printf("[EPG-DEBUG] GetEPG post-refresh result playlist_id=%d channel_epg_id=%q entries=%d", playlistID, channelEpgID, len(entries))
 	}
-	if err := rows.Err(); err != nil {
-		log.Printf("[EPG-DEBUG] GetEPG rows iteration error playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, err)
-	}
+
 	log.Printf("[EPG-DEBUG] GetEPG result playlist_id=%d requested_channel=%q normalized_channel=%q entries=%d", playlistID, channelEpgID, normalizedChannelEpgID, len(entries))
 	writeJSON(w, http.StatusOK, entries)
 }

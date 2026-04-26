@@ -166,6 +166,14 @@ func RefreshPlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if p.Type != "vuplus" {
+		if _, err := database.DB.Exec(`DELETE FROM epg_fetch_log WHERE playlist_id = ?`, playlistID); err != nil {
+			log.Printf("refresh playlist %d failed to invalidate epg_fetch_log: %v", playlistID, err)
+		} else {
+			log.Printf("[EPG-DEBUG] refresh playlist %d invalidated epg_fetch_log for type=%s", playlistID, p.Type)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(channels)})
 }
 
