@@ -39,11 +39,10 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 	var channels []models.Channel
 	sortOrder := 0
 	piconClient := &http.Client{Timeout: 1500 * time.Millisecond}
-	piconExistsCache := make(map[string]bool)
 	const debugPiconLimit = 30
 	debuggedPicon := 0
-	piconFound := 0
-	piconMissing := 0
+	piconProbedOk := 0
+	piconProbedFail := 0
 
 	for _, bouquet := range bouquets {
 		ref := strings.TrimSpace(bouquet.Reference)
@@ -73,20 +72,28 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 
 			canonicalSvcRef := normalizeVuplusServiceRef(svcRef)
 			streamURL := fmt.Sprintf("http://%s:8001/%s", ip, svcRef)
-			logoURL, usedCandidate, attemptDebug := resolveVuplusPiconURL(base, svcRef, canonicalSvcRef, piconClient, piconExistsCache)
+			logoURL := vuplusGetPiconURL(base, svcRef)
 			if logoURL == "" {
-				piconMissing++
-			} else {
-				piconFound++
+				logoURL = vuplusGetPiconURL(base, canonicalSvcRef)
+			}
+
+			attemptDebug := "not_probed"
+			if debuggedPicon < debugPiconLimit {
+				if ok, status := urlReachable(piconClient, logoURL); ok {
+					attemptDebug = fmt.Sprintf("probe:%s", status)
+					piconProbedOk++
+				} else {
+					attemptDebug = fmt.Sprintf("probe:%s", status)
+					piconProbedFail++
+				}
 			}
 			if debuggedPicon < debugPiconLimit {
-				log.Printf("[vuplus][picon] playlist=%d channel=%q sRef=%q canonical=%q selected=%q used=%q attempts=%s",
+				log.Printf("[vuplus][picon] playlist=%d channel=%q sRef=%q canonical=%q selected=%q attempts=%s",
 					playlistID,
 					svcName,
 					svcRef,
 					canonicalSvcRef,
 					logoURL,
-					usedCandidate,
 					attemptDebug,
 				)
 				debuggedPicon++
@@ -106,12 +113,13 @@ func FetchVuplus(p models.Playlist, playlistID int64) ([]models.Channel, error) 
 		}
 	}
 
-	log.Printf("[vuplus][picon] playlist=%d summary channels=%d with_logo=%d missing_logo=%d debugged=%d",
+	log.Printf("[vuplus][picon] playlist=%d summary channels=%d assigned_logo=%d debugged=%d probe_ok=%d probe_fail=%d",
 		playlistID,
 		len(channels),
-		piconFound,
-		piconMissing,
+		len(channels),
 		debuggedPicon,
+		piconProbedOk,
+		piconProbedFail,
 	)
 
 	return channels, nil
@@ -155,67 +163,13 @@ func normalizeVuplusServiceRef(sRef string) string {
 	return trimmed
 }
 
-func vuplusPiconCandidates(base, sRef string) []string {
+func vuplusGetPiconURL(base, sRef string) string {
 	trimmedRef := strings.TrimSpace(sRef)
 	if trimmedRef == "" {
-		return nil
-	}
-	canonicalRef := normalizeVuplusServiceRef(trimmedRef)
-	if canonicalRef == "" {
-		canonicalRef = trimmedRef
+		return ""
 	}
 
-	underscoreName := piconName(canonicalRef)
-	lowerUnderscoreName := strings.ToLower(underscoreName)
-	escapedCanonicalRef := url.QueryEscape(canonicalRef)
-	escapedOriginalRef := url.QueryEscape(trimmedRef)
-
-	candidates := []string{
-		fmt.Sprintf("%s/web/getpicon?sRef=%s", base, escapedCanonicalRef),
-		fmt.Sprintf("%s/picon/%s.png", base, underscoreName),
-	}
-
-	if trimmedRef != canonicalRef {
-		candidates = append(candidates, fmt.Sprintf("%s/web/getpicon?sRef=%s", base, escapedOriginalRef))
-	}
-
-	if lowerUnderscoreName != underscoreName {
-		candidates = append(candidates, fmt.Sprintf("%s/picon/%s.png", base, lowerUnderscoreName))
-	}
-
-	return candidates
-}
-
-func resolveVuplusPiconURL(base, sRef, canonicalSRef string, client *http.Client, cache map[string]bool) (string, string, string) {
-	candidates := vuplusPiconCandidates(base, canonicalSRef)
-	if len(candidates) == 0 {
-		candidates = vuplusPiconCandidates(base, sRef)
-	}
-	if len(candidates) == 0 {
-		return "", "", "no_candidates"
-	}
-
-	attempts := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		reachable, cacheState := cache[candidate]
-		if cacheState {
-			if reachable {
-				attempts = append(attempts, fmt.Sprintf("cache-hit-ok:%s", candidate))
-				return candidate, candidate, strings.Join(attempts, " | ")
-			}
-			attempts = append(attempts, fmt.Sprintf("cache-hit-miss:%s", candidate))
-			continue
-		}
-
-		reachable, status := urlReachable(client, candidate)
-		cache[candidate] = reachable
-		attempts = append(attempts, fmt.Sprintf("probe:%s=>%s", status, candidate))
-		if reachable {
-			return candidate, candidate, strings.Join(attempts, " | ")
-		}
-	}
-
-	return "", "", strings.Join(attempts, " | ")
+	return fmt.Sprintf("%s/web/getpicon?sRef=%s", base, url.QueryEscape(trimmedRef))
 }
 
 func urlReachable(client *http.Client, rawURL string) (bool, string) {
