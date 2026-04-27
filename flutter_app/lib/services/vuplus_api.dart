@@ -30,7 +30,7 @@ class VuplusApi {
     if (response.statusCode != 200) {
       throw Exception('VU+ GET $path failed: ${response.statusCode}');
     }
-    return response.body;
+    return utf8.decode(response.bodyBytes, allowMalformed: true);
   }
 
   void _ensureOpenWebifSuccess(String body, String operation) {
@@ -63,7 +63,7 @@ class VuplusApi {
     if (response.statusCode != 200) {
       throw Exception('VU+ POST $path failed: ${response.statusCode}');
     }
-    return response.body;
+    return utf8.decode(response.bodyBytes, allowMalformed: true);
   }
 
   // Fetch channel list (services or bouquets)

@@ -179,6 +179,10 @@ class PlaylistStore extends ChangeNotifier {
   final Map<int, Future<List<Channel>>> _playlistChannelsInFlight = {};
   final Map<int, String> _runtimeEpgUrlByPlaylist = {};
 
+  // XMLTV cache: url -> (fetchedAt, rawXml)
+  final Map<String, ({DateTime fetchedAt, String xml})> _xmltvCache = {};
+  static const Duration _xmltvCacheTtl = Duration(minutes: 30);
+
   bool _isMaskedXtreamPassword(String? value) => (value ?? '').trim() == '***';
 
   String _sanitizeUrlForLog(String value) {
@@ -858,7 +862,7 @@ class PlaylistStore extends ChangeNotifier {
   DateTime? _parseXmltvDate(String value) {
     final raw = value.trim();
     if (raw.isEmpty) return null;
-    final m = RegExp(r'^(\\d{14})(?:\\s+([+-]\\d{4}))?').firstMatch(raw);
+    final m = RegExp(r'^(\d{14})(?:\s+([+-]\d{4}))?').firstMatch(raw);
     if (m == null) return null;
 
     final digits = m.group(1)!;
@@ -882,6 +886,18 @@ class PlaylistStore extends ChangeNotifier {
     return utc.subtract(Duration(minutes: totalMinutes)).toLocal();
   }
 
+  String _normalizeEpgMatchText(String value) {
+    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  bool _roughEpgNameMatch(String left, String right) {
+    if (left.isEmpty || right.isEmpty) return false;
+    if (left == right) return true;
+    if (left.length >= 5 && right.contains(left)) return true;
+    if (right.length >= 5 && left.contains(right)) return true;
+    return false;
+  }
+
   Future<List<EpgEntry>> _loadXmltvEpgForChannel(
     Playlist playlist,
     Channel channel,
@@ -889,20 +905,77 @@ class PlaylistStore extends ChangeNotifier {
     final configured = (playlist.epgUrl ?? '').trim();
     final discovered = (_runtimeEpgUrlByPlaylist[playlist.id] ?? '').trim();
     final epgUrl = configured.isNotEmpty ? configured : discovered;
-    if (epgUrl.isEmpty || channel.epgChannelId.trim().isEmpty) {
+    if (epgUrl.isEmpty) {
       return const [];
     }
 
-    final xmlRaw = await _readTextFromUrlOrFile(epgUrl);
+    final cached = _xmltvCache[epgUrl];
+    final String xmlRaw;
+    if (cached != null &&
+        DateTime.now().difference(cached.fetchedAt) < _xmltvCacheTtl) {
+      xmlRaw = cached.xml;
+    } else {
+      xmlRaw = await _readTextFromUrlOrFile(epgUrl);
+      _xmltvCache[epgUrl] = (fetchedAt: DateTime.now(), xml: xmlRaw);
+    }
     final doc = XmlDocument.parse(xmlRaw);
-    final target = channel.epgChannelId.trim().toLowerCase();
 
+    final candidateChannelIds = <String>{};
+    final targetId = channel.epgChannelId.trim().toLowerCase();
+    final normalizedChannelName = _normalizeEpgMatchText(channel.name);
+
+
+    if (targetId.isNotEmpty) {
+      candidateChannelIds.add(targetId);
+    }
+
+    // Only do name-based fallback when there is no explicit epgChannelId,
+    // to avoid false positives from loose substring matching.
+    if (targetId.isEmpty && normalizedChannelName.isNotEmpty) {
+      final allXmlChannels = doc.findAllElements('channel').toList();
+      for (final xmlChannel in allXmlChannels) {
+        final xmlId = (xmlChannel.getAttribute('id') ?? '')
+            .trim()
+            .toLowerCase();
+        if (xmlId.isEmpty) continue;
+
+        final normalizedXmlId = _normalizeEpgMatchText(xmlId);
+        if (_roughEpgNameMatch(normalizedChannelName, normalizedXmlId)) {
+          debugPrint(
+            '[EPG] ID match: "$normalizedChannelName" ~ "$normalizedXmlId" (id="$xmlId")',
+          );
+          candidateChannelIds.add(xmlId);
+          continue;
+        }
+
+        final displayNames = xmlChannel
+            .findElements('display-name')
+            .map((e) => _normalizeEpgMatchText(e.innerText.trim()))
+            .where((v) => v.isNotEmpty)
+            .toList();
+        final hasDisplayMatch = displayNames.any(
+          (v) => _roughEpgNameMatch(normalizedChannelName, v),
+        );
+        if (hasDisplayMatch) {
+          debugPrint(
+            '[EPG] display-name match: "$normalizedChannelName" ~ $displayNames (id="$xmlId")',
+          );
+          candidateChannelIds.add(xmlId);
+        }
+      }
+    }
+
+    if (candidateChannelIds.isEmpty) {
+      return const [];
+    }
+
+    final allProgrammes = doc.findAllElements('programme').toList();
     final entries = <EpgEntry>[];
-    for (final programme in doc.findAllElements('programme')) {
+    for (final programme in allProgrammes) {
       final channelIdAttr = (programme.getAttribute('channel') ?? '')
           .trim()
           .toLowerCase();
-      if (channelIdAttr != target) continue;
+      if (!candidateChannelIds.contains(channelIdAttr)) continue;
 
       final start = _parseXmltvDate(programme.getAttribute('start') ?? '');
       final end = _parseXmltvDate(programme.getAttribute('stop') ?? '');
@@ -917,7 +990,9 @@ class PlaylistStore extends ChangeNotifier {
 
       entries.add(
         EpgEntry(
-          channelEpgId: channel.epgChannelId,
+          channelEpgId: channel.epgChannelId.isNotEmpty
+              ? channel.epgChannelId
+              : channelIdAttr,
           startTime: start,
           endTime: end,
           title: title,
@@ -927,7 +1002,12 @@ class PlaylistStore extends ChangeNotifier {
     }
 
     entries.sort((a, b) => a.startTime.compareTo(b.startTime));
-    return entries;
+
+    // Deduplicate entries with the same start time (feed may list same slot multiple times)
+    final seen = <DateTime>{};
+    final deduped = entries.where((e) => seen.add(e.startTime)).toList();
+
+    return deduped;
   }
 
   List<EpgEntry> _parseVuplusEpg(String xmlRaw, String fallbackServiceRef) {

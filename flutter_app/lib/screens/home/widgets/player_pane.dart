@@ -69,7 +69,12 @@ class PlayerPane extends StatelessWidget {
       const SizedBox(height: 8),
     ];
 
-    final epgToShow = store.epgEntries.take(3).toList();
+    final now = DateTime.now();
+    final allEpg = store.epgEntries;
+    // Find the currently airing entry (or the next upcoming if none is live)
+    final nowIndex = allEpg.indexWhere((e) => e.startTime.isBefore(now) && e.endTime.isAfter(now));
+    final startIndex = nowIndex >= 0 ? nowIndex : allEpg.indexWhere((e) => e.startTime.isAfter(now));
+    final epgToShow = startIndex >= 0 ? allEpg.skip(startIndex).take(5).toList() : allEpg.take(5).toList();
 
     if (isCompactLayout) {
       return Card(
@@ -288,7 +293,7 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                                 },
                           color: widget.hasEnded
                               ? null
-                              : Theme.of(context).colorScheme.error,
+                              : Colors.red,
                           icon: const Icon(Icons.fiber_manual_record),
                         ),
                 ),
