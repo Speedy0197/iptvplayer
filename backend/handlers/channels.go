@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -12,7 +11,6 @@ import (
 	"github.com/flodev/iptvplayer/database"
 	"github.com/flodev/iptvplayer/middleware"
 	"github.com/flodev/iptvplayer/models"
-	"github.com/flodev/iptvplayer/service/providers"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -195,70 +193,6 @@ func ReplacePlaylistChannels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(req.Channels)})
-}
-
-func RefreshPlaylist(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r)
-	playlistID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
-		return
-	}
-
-	p, ok := ownsPlaylist(userID, playlistID)
-	if !ok {
-		writeError(w, http.StatusNotFound, "playlist not found")
-		return
-	}
-
-	var channels []models.Channel
-	discoveredEPGURL := ""
-	switch p.Type {
-	case "m3u":
-		if p.M3UContent != nil && *p.M3UContent != "" {
-			channels, discoveredEPGURL, err = providers.ParseM3UWithEPG(strings.NewReader(*p.M3UContent), playlistID)
-		} else if p.M3UURL != nil && *p.M3UURL != "" {
-			channels, discoveredEPGURL, err = providers.FetchM3UWithEPG(*p.M3UURL, playlistID)
-		} else {
-			writeError(w, http.StatusBadRequest, "playlist has no URL or content")
-			return
-		}
-	case "xtream":
-		channels, discoveredEPGURL, err = providers.FetchXtream(p, playlistID)
-	case "vuplus":
-		channels, err = providers.FetchVuplus(p, playlistID)
-	}
-	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("fetch error: %v", err))
-		return
-	}
-
-	if err := persistRefreshedChannels(playlistID, channels); err != nil {
-		log.Printf("refresh playlist %d failed: %v", playlistID, err)
-		if isSQLiteBusy(err) {
-			writeError(w, http.StatusServiceUnavailable, "database busy, please retry")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "db error")
-		return
-	}
-
-	resolvedEPGURL := resolvePlaylistEPGURL(p.EpgURL, discoveredEPGURL)
-	if resolvedEPGURL != nil {
-		if _, err := database.DB.Exec(`UPDATE playlists SET epg_url = ? WHERE id = ?`, *resolvedEPGURL, playlistID); err != nil {
-			log.Printf("refresh playlist %d failed to persist epg_url: %v", playlistID, err)
-		}
-	}
-
-	if p.Type != "vuplus" {
-		if _, err := database.DB.Exec(`DELETE FROM epg_fetch_log WHERE playlist_id = ?`, playlistID); err != nil {
-			log.Printf("refresh playlist %d failed to invalidate epg_fetch_log: %v", playlistID, err)
-		} else {
-			log.Printf("[EPG-DEBUG] refresh playlist %d invalidated epg_fetch_log for type=%s", playlistID, p.Type)
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"count": len(channels)})
 }
 
 func resolvePlaylistEPGURL(existing *string, discovered string) *string {

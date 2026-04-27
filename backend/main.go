@@ -68,19 +68,12 @@ func main() {
 			r.Post("/playlists", handlers.CreatePlaylist)
 			r.Put("/playlists/{id}", handlers.UpdatePlaylist)
 			r.Delete("/playlists/{id}", handlers.DeletePlaylist)
-			r.Post("/playlists/{id}/refresh", handlers.RefreshPlaylist)
 			r.Get("/playlists/{id}/source", handlers.GetPlaylistSource)
 
 			// Channels & Groups
 			r.Get("/playlists/{id}/groups", handlers.ListGroups)
 			r.Get("/playlists/{id}/channels", handlers.ListChannels)
 			r.Put("/playlists/{id}/channels", handlers.ReplacePlaylistChannels)
-
-			// EPG
-			r.Get("/playlists/{playlist_id}/epg/{channel_epg_id}", handlers.GetEPG)
-			r.Post("/playlists/{playlist_id}/epg/record", handlers.RecordVuplusEPG)
-			r.Get("/playlists/{playlist_id}/timers", handlers.GetVuplusTimers)
-			r.Delete("/playlists/{playlist_id}/timers", handlers.DeleteVuplusTimer)
 
 			// Favorites
 			r.Get("/favorites/channels", handlers.ListFavoriteChannels)
