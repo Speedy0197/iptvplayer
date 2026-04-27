@@ -956,6 +956,81 @@ func GetVuplusTimers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, timers)
 }
 
+// Remove a VU+ timer by service ref and begin time
+func DeleteVuplusTimer(w http.ResponseWriter, r *http.Request) {
+    userID := middleware.GetUserID(r)
+    playlistID, err := strconv.ParseInt(chi.URLParam(r, "playlist_id"), 10, 64)
+    if err != nil {
+        writeError(w, http.StatusBadRequest, "invalid playlist_id")
+        return
+    }
+    if _, ok := ownsPlaylist(userID, playlistID); !ok {
+        writeError(w, http.StatusNotFound, "playlist not found")
+        return
+    }
+
+    var playlistType, vuplusIP, vuplusPort string
+    if err := database.DB.QueryRow(
+        `SELECT type, COALESCE(vuplus_ip, ''), COALESCE(vuplus_port, '80') FROM playlists WHERE id = ?`,
+        playlistID,
+    ).Scan(&playlistType, &vuplusIP, &vuplusPort); err != nil {
+        writeError(w, http.StatusInternalServerError, "db error")
+        return
+    }
+    if playlistType != "vuplus" {
+        writeError(w, http.StatusBadRequest, "not a vuplus playlist")
+        return
+    }
+    vuplusIP = strings.TrimSpace(vuplusIP)
+    vuplusPort = strings.TrimSpace(vuplusPort)
+    if vuplusIP == "" {
+        writeError(w, http.StatusBadRequest, "vuplus ip missing")
+        return
+    }
+    if vuplusPort == "" {
+        vuplusPort = "80"
+    }
+
+    // Parse JSON body: { "channel_epg_id": "...", "begin_unix": 1234567890 }
+    var req struct {
+        ChannelEpgID string `json:"channel_epg_id"`
+        BeginUnix    int64  `json:"begin_unix"`
+    }
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        writeError(w, http.StatusBadRequest, "invalid json body")
+        return
+    }
+    sRef := req.ChannelEpgID
+    begin := req.BeginUnix
+    if sRef == "" || begin == 0 {
+        writeError(w, http.StatusBadRequest, "missing channel_epg_id or begin_unix")
+        return
+    }
+
+    // Call OpenWebif timerdelete
+    values := url.Values{}
+    values.Set("sRef", sRef)
+    values.Set("begin", strconv.FormatInt(begin, 10))
+    timerURL := fmt.Sprintf("http://%s:%s/web/timerdelete?%s", vuplusIP, vuplusPort, values.Encode())
+    client := &http.Client{Timeout: 8 * time.Second}
+    resp, err := client.Get(timerURL)
+    if err != nil {
+        if isNetworkOrTimeoutError(err) {
+            log.Printf("Vu+ timerdelete: ignoring network/timeout error (timer likely deleted): %v", err)
+        } else {
+            writeError(w, http.StatusBadGateway, "failed to delete timer on vuplus device")
+            return
+        }
+    } else {
+        defer resp.Body.Close()
+        if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+            writeError(w, http.StatusBadGateway, fmt.Sprintf("vuplus timerdelete status %d", resp.StatusCode))
+            return
+        }
+    }
+    writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 type vuplusTimerListXML struct {
 	Timers []vuplusTimerXML `xml:"e2timer"`
 }

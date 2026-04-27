@@ -9,6 +9,34 @@ export 'channel_sort.dart' show ChannelSortOrder;
 export 'playlist_search.dart' show SearchResultItem, SearchResultType;
 
 class PlaylistStore extends ChangeNotifier {
+  Future<void> recordEpgEntry(EpgEntry entry) async {
+    final playlist = selectedPlaylist;
+    if (playlist == null) {
+      throw const ApiException('No selected playlist');
+    }
+    if (playlist.type != 'vuplus') {
+      throw const ApiException('Recording is only supported for VU+ playlists');
+    }
+
+    final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
+    final endUnix = entry.endTime.toUtc().millisecondsSinceEpoch ~/ 1000;
+    final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
+
+    await api.post(
+      '/playlists/${playlist.id}/timers',
+      {
+        'channel_epg_id': entry.channelEpgId,
+        'start_time': entry.startTime.toIso8601String(),
+        'end_time': entry.endTime.toIso8601String(),
+        'title': entry.title,
+        'description': entry.description,
+      },
+    );
+
+    // Optimistically add the timer key so the UI updates immediately.
+    _timerKeys = Set.from(_timerKeys)..add(key);
+    notifyListeners();
+  }
   final ApiClient api;
 
   PlaylistStore({required this.api});
@@ -363,27 +391,26 @@ class PlaylistStore extends ChangeNotifier {
     }
   }
 
-  Future<void> recordEpgEntry(EpgEntry entry) async {
+  Future<void> removeEpgTimer(EpgEntry entry) async {
     final playlist = selectedPlaylist;
     if (playlist == null) {
       throw const ApiException('No selected playlist');
     }
     if (playlist.type != 'vuplus') {
-      throw const ApiException('Recording is only supported for VU+ playlists');
+      throw const ApiException(
+        'Removing timer is only supported for VU+ playlists',
+      );
     }
 
-    await api.post('/playlists/${playlist.id}/epg/record', {
-      'channel_epg_id': entry.channelEpgId,
-      'start_time': entry.startTime.toUtc().toIso8601String(),
-      'end_time': entry.endTime.toUtc().toIso8601String(),
-      'title': entry.title,
-      'description': entry.description,
-    });
-
-    // Optimistically mark the timer as scheduled so the UI updates immediately.
     final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
     final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
-    _timerKeys = {..._timerKeys, key};
+
+    final params =
+        '?channel_epg_id=${Uri.encodeComponent(entry.channelEpgId)}&begin_unix=$beginUnix';
+    await api.delete('/playlists/${playlist.id}/timers$params');
+
+    // Optimistically remove the timer key so the UI updates immediately.
+    _timerKeys = Set.from(_timerKeys)..remove(key);
     notifyListeners();
   }
 

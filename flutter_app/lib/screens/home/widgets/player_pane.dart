@@ -38,6 +38,7 @@ class PlayerPane extends StatelessWidget {
       hasEnded: entry.endTime.isBefore(DateTime.now()),
       isTimerScheduled: store.isTimerScheduled(entry),
       onRecord: () => store.recordEpgEntry(entry),
+      onRemoveTimer: () => store.removeEpgTimer(entry),
     );
   }
 
@@ -68,6 +69,8 @@ class PlayerPane extends StatelessWidget {
       const SizedBox(height: 8),
     ];
 
+    final epgToShow = store.epgEntries.take(3).toList();
+
     if (isCompactLayout) {
       return Card(
         child: Padding(
@@ -85,15 +88,13 @@ class PlayerPane extends StatelessWidget {
                   padding: EdgeInsets.only(bottom: 8),
                   child: Text('No EPG source configured for this channel'),
                 )
-              else if (store.epgEntries.isEmpty)
+              else if (epgToShow.isEmpty)
                 const Padding(
                   padding: EdgeInsets.only(bottom: 8),
                   child: Text('No EPG data available'),
                 )
               else
-                ...store.epgEntries.map(
-                  (entry) => _buildEpgEntryCard(context, entry),
-                ),
+                ...epgToShow.map((entry) => _buildEpgEntryCard(context, entry)),
             ],
           ),
         ),
@@ -112,12 +113,12 @@ class PlayerPane extends StatelessWidget {
                   ? const Center(child: CircularProgressIndicator())
                   : store.epgSourceMissing
                   ? const Text('No EPG source configured for this channel')
-                  : store.epgEntries.isEmpty
+                  : epgToShow.isEmpty
                   ? const Text('No EPG data available')
                   : ListView.builder(
-                      itemCount: store.epgEntries.length,
+                      itemCount: epgToShow.length,
                       itemBuilder: (context, i) {
-                        final e = store.epgEntries[i];
+                        final e = epgToShow[i];
                         return _buildEpgEntryCard(context, e);
                       },
                     ),
@@ -138,6 +139,7 @@ class _EpgEntryCard extends StatefulWidget {
   final bool hasEnded;
   final bool isTimerScheduled;
   final Future<void> Function() onRecord;
+  final Future<void> Function() onRemoveTimer;
 
   const _EpgEntryCard({
     required this.storageKey,
@@ -148,6 +150,7 @@ class _EpgEntryCard extends StatefulWidget {
     required this.hasEnded,
     required this.isTimerScheduled,
     required this.onRecord,
+    required this.onRemoveTimer,
   });
 
   @override
@@ -157,32 +160,29 @@ class _EpgEntryCard extends StatefulWidget {
 class _EpgEntryCardState extends State<_EpgEntryCard> {
   bool _expanded = false;
   bool _savingRecording = false;
+  bool _removingTimer = false;
 
-  Future<void> _record() async {
-    if (_savingRecording || widget.hasEnded) {
-      return;
-    }
-
+  Future<void> _removeTimer() async {
+    if (_removingTimer) return;
     setState(() {
-      _savingRecording = true;
+      _removingTimer = true;
     });
-
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await widget.onRecord();
+      await widget.onRemoveTimer();
       if (!mounted) return;
       messenger.showSnackBar(
-        const SnackBar(content: Text('Recording scheduled')),
+        const SnackBar(content: Text('Recording timer removed')),
       );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Could not schedule recording: $e')),
+        SnackBar(content: Text('Could not remove timer: $e')),
       );
     } finally {
       if (!mounted) return;
       setState(() {
-        _savingRecording = false;
+        _removingTimer = false;
       });
     }
   }
@@ -219,11 +219,23 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
               if (widget.isTimerScheduled)
                 Tooltip(
                   message: 'Recording scheduled',
-                  child: Icon(
-                    Icons.check_circle,
-                    size: 20,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+                  child: _removingTimer
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: Padding(
+                            padding: EdgeInsets.all(2),
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : InkWell(
+                          onTap: _removeTimer,
+                          child: Icon(
+                            Icons.check_circle,
+                            size: 20,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
                 )
               else
                 SizedBox(
@@ -238,7 +250,40 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                           padding: EdgeInsets.zero,
                           iconSize: 20,
                           tooltip: widget.hasEnded ? 'Program ended' : 'Record',
-                          onPressed: widget.hasEnded ? null : _record,
+                          onPressed: widget.hasEnded
+                              ? null
+                              : () async {
+                                  if (_savingRecording) return;
+                                  setState(() {
+                                    _savingRecording = true;
+                                  });
+                                  final messenger = ScaffoldMessenger.of(
+                                    context,
+                                  );
+                                  try {
+                                    await widget.onRecord();
+                                    if (!mounted) return;
+                                    messenger.showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Recording timer added'),
+                                      ),
+                                    );
+                                  } catch (e) {
+                                    if (!mounted) return;
+                                    messenger.showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Could not add timer: $e',
+                                        ),
+                                      ),
+                                    );
+                                  } finally {
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _savingRecording = false;
+                                    });
+                                  }
+                                },
                           color: widget.hasEnded
                               ? null
                               : Theme.of(context).colorScheme.error,
