@@ -190,3 +190,29 @@ class EpgEntry {
     );
   }
 }
+
+class VuplusTimer {
+  final String channelEpgId;
+  final int beginUnix;
+  final int endUnix;
+  final String name;
+
+  const VuplusTimer({
+    required this.channelEpgId,
+    required this.beginUnix,
+    required this.endUnix,
+    required this.name,
+  });
+
+  factory VuplusTimer.fromJson(Map<String, dynamic> json) {
+    return VuplusTimer(
+      channelEpgId: (json['channel_epg_id'] as String?) ?? '',
+      beginUnix: (json['begin_unix'] as num?)?.toInt() ?? 0,
+      endUnix: (json['end_unix'] as num?)?.toInt() ?? 0,
+      name: (json['name'] as String?) ?? '',
+    );
+  }
+
+  /// Key used to match against an [EpgEntry].
+  String get key => '${channelEpgId.toLowerCase()}:$beginUnix';
+}

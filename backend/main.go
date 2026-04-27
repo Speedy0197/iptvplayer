@@ -77,6 +77,7 @@ func main() {
 			// EPG
 			r.Get("/playlists/{playlist_id}/epg/{channel_epg_id}", handlers.GetEPG)
 			r.Post("/playlists/{playlist_id}/epg/record", handlers.RecordVuplusEPG)
+			r.Get("/playlists/{playlist_id}/timers", handlers.GetVuplusTimers)
 
 			// Favorites
 			r.Get("/favorites/channels", handlers.ListFavoriteChannels)

@@ -872,6 +872,13 @@ func createVuplusRecordingTimer(
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Get(timerURL)
 	if err != nil {
+		// VU+ OpenWebif often creates the timer but drops the connection
+		// before sending a response. Treat any network/timeout error as
+		// success — the caller can verify in OpenWebif if needed.
+		if isNetworkOrTimeoutError(err) {
+			log.Printf("Vu+ timeradd: ignoring network/timeout error (timer likely created): %v", err)
+			return nil
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -902,6 +909,119 @@ func createVuplusRecordingTimer(
 	return nil
 }
 
+func GetVuplusTimers(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	playlistID, err := strconv.ParseInt(chi.URLParam(r, "playlist_id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid playlist_id")
+		return
+	}
+
+	if _, ok := ownsPlaylist(userID, playlistID); !ok {
+		writeError(w, http.StatusNotFound, "playlist not found")
+		return
+	}
+
+	var playlistType, vuplusIP, vuplusPort string
+	if err := database.DB.QueryRow(
+		`SELECT type, COALESCE(vuplus_ip, ''), COALESCE(vuplus_port, '80') FROM playlists WHERE id = ?`,
+		playlistID,
+	).Scan(&playlistType, &vuplusIP, &vuplusPort); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	if playlistType != "vuplus" {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	vuplusIP = strings.TrimSpace(vuplusIP)
+	vuplusPort = strings.TrimSpace(vuplusPort)
+	if vuplusIP == "" {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	if vuplusPort == "" {
+		vuplusPort = "80"
+	}
+
+	timers, err := fetchVuplusTimerList(vuplusIP, vuplusPort)
+	if err != nil {
+		log.Printf("Vu+ timer list fetch failed playlist_id=%d: %v", playlistID, err)
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, timers)
+}
+
+type vuplusTimerListXML struct {
+	Timers []vuplusTimerXML `xml:"e2timer"`
+}
+
+type vuplusTimerXML struct {
+	ServiceRef string `xml:"e2servicereference"`
+	Name       string `xml:"e2name"`
+	Begin      string `xml:"e2begin"`
+	End        string `xml:"e2end"`
+	Disabled   string `xml:"e2disabled"`
+}
+
+type vuplusTimerEntry struct {
+	ChannelEpgID string `json:"channel_epg_id"`
+	BeginUnix    int64  `json:"begin_unix"`
+	EndUnix      int64  `json:"end_unix"`
+	Name         string `json:"name"`
+}
+
+func fetchVuplusTimerList(vuplusIP, vuplusPort string) ([]vuplusTimerEntry, error) {
+	timerURL := fmt.Sprintf("http://%s:%s/web/timerlist", vuplusIP, vuplusPort)
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(timerURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	body, err := readPossiblyGzippedBody(resp.Body, resp.Header.Get("Content-Encoding"))
+	if err != nil {
+		return nil, err
+	}
+
+	var list vuplusTimerListXML
+	if err := xml.Unmarshal(body, &list); err != nil {
+		return nil, err
+	}
+
+	result := make([]vuplusTimerEntry, 0, len(list.Timers))
+	for _, t := range list.Timers {
+		if strings.TrimSpace(t.Disabled) == "1" {
+			continue
+		}
+		sRef := strings.TrimSpace(t.ServiceRef)
+		if sRef == "" {
+			continue
+		}
+		begin, err := strconv.ParseInt(strings.TrimSpace(t.Begin), 10, 64)
+		if err != nil {
+			continue
+		}
+		end, _ := strconv.ParseInt(strings.TrimSpace(t.End), 10, 64)
+		result = append(result, vuplusTimerEntry{
+			ChannelEpgID: sRef,
+			BeginUnix:    begin,
+			EndUnix:      end,
+			Name:         strings.TrimSpace(t.Name),
+		})
+	}
+	return result, nil
+}
+
 func parseRequestTime(raw string) (time.Time, error) {
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
 		if parsed, err := time.Parse(layout, raw); err == nil {
@@ -909,6 +1029,21 @@ func parseRequestTime(raw string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("invalid timestamp %q", raw)
+}
+
+// isNetworkOrTimeoutError reports whether err is a context deadline / timeout /
+// EOF error. VU+ OpenWebif sometimes fires-and-forgets the response after
+// creating a timer, so these errors should be treated as success.
+func isNetworkOrTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "context deadline exceeded") ||
+		strings.Contains(s, "Client.Timeout") ||
+		strings.Contains(s, "EOF") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "broken pipe")
 }
 
 func refreshEPG(playlistID int64) {

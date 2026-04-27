@@ -36,6 +36,7 @@ class PlayerPane extends StatelessWidget {
       description: description,
       canRecord: store.isSelectedPlaylistVuplus,
       hasEnded: entry.endTime.isBefore(DateTime.now()),
+      isTimerScheduled: store.isTimerScheduled(entry),
       onRecord: () => store.recordEpgEntry(entry),
     );
   }
@@ -135,6 +136,7 @@ class _EpgEntryCard extends StatefulWidget {
   final String description;
   final bool canRecord;
   final bool hasEnded;
+  final bool isTimerScheduled;
   final Future<void> Function() onRecord;
 
   const _EpgEntryCard({
@@ -144,6 +146,7 @@ class _EpgEntryCard extends StatefulWidget {
     required this.description,
     required this.canRecord,
     required this.hasEnded,
+    required this.isTimerScheduled,
     required this.onRecord,
   });
 
@@ -213,25 +216,35 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
             ),
             if (widget.canRecord) ...[
               const SizedBox(width: 4),
-              SizedBox(
-                width: 32,
-                height: 32,
-                child: _savingRecording
-                    ? const Padding(
-                        padding: EdgeInsets.all(6),
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : IconButton(
-                        padding: EdgeInsets.zero,
-                        iconSize: 20,
-                        tooltip: widget.hasEnded ? 'Program ended' : 'Record',
-                        onPressed: widget.hasEnded ? null : _record,
-                        color: widget.hasEnded
-                            ? null
-                            : Theme.of(context).colorScheme.error,
-                        icon: const Icon(Icons.fiber_manual_record),
-                      ),
-              ),
+              if (widget.isTimerScheduled)
+                Tooltip(
+                  message: 'Recording scheduled',
+                  child: Icon(
+                    Icons.check_circle,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                )
+              else
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: _savingRecording
+                      ? const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : IconButton(
+                          padding: EdgeInsets.zero,
+                          iconSize: 20,
+                          tooltip: widget.hasEnded ? 'Program ended' : 'Record',
+                          onPressed: widget.hasEnded ? null : _record,
+                          color: widget.hasEnded
+                              ? null
+                              : Theme.of(context).colorScheme.error,
+                          icon: const Icon(Icons.fiber_manual_record),
+                        ),
+                ),
             ],
           ],
         ),

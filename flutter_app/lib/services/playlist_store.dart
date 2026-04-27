@@ -21,6 +21,7 @@ class PlaylistStore extends ChangeNotifier {
   List<Channel> favoriteChannels = const [];
   List<Group> favoriteGroups = const [];
   List<EpgEntry> epgEntries = const [];
+  Set<String> _timerKeys = {};
 
   int? selectedPlaylistId;
   String? selectedGroup;
@@ -55,6 +56,13 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   bool get isSelectedPlaylistVuplus => selectedPlaylist?.type == 'vuplus';
+
+  /// Returns true if [entry] has a matching timer scheduled on the VU+ box.
+  bool isTimerScheduled(EpgEntry entry) {
+    final key =
+        '${Uri.decodeComponent(entry.channelEpgId).toLowerCase()}:${entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000}';
+    return _timerKeys.contains(key);
+  }
 
   // --- Derived list getters ---
 
@@ -283,13 +291,36 @@ class PlaylistStore extends ChangeNotifier {
     loadingEpg = true;
     notifyListeners();
     try {
-      epgEntries =
-          (await api.get(
-                    '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(effectiveEpgChannelId)}',
-                  )
-                  as List<dynamic>)
-              .map((e) => EpgEntry.fromJson(e as Map<String, dynamic>))
-              .toList();
+      final futures = <Future>[
+        api
+            .get(
+              '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(effectiveEpgChannelId)}',
+            )
+            .then(
+              (raw) => (raw as List<dynamic>)
+                  .map((e) => EpgEntry.fromJson(e as Map<String, dynamic>))
+                  .toList(),
+            ),
+      ];
+
+      if (isSelectedPlaylistVuplus) {
+        futures.add(
+          api
+              .get('/playlists/$epgPlaylistId/timers')
+              .then(
+                (raw) => (raw as List<dynamic>)
+                    .map((e) => VuplusTimer.fromJson(e as Map<String, dynamic>))
+                    .toSet(),
+              )
+              .catchError((_) => <VuplusTimer>{}),
+        );
+      }
+
+      final results = await Future.wait(futures);
+      epgEntries = results[0] as List<EpgEntry>;
+      if (futures.length > 1) {
+        _timerKeys = (results[1] as Set<VuplusTimer>).map((t) => t.key).toSet();
+      }
     } finally {
       loadingEpg = false;
       notifyListeners();
@@ -312,6 +343,12 @@ class PlaylistStore extends ChangeNotifier {
       'title': entry.title,
       'description': entry.description,
     });
+
+    // Optimistically mark the timer as scheduled so the UI updates immediately.
+    final decodedId = Uri.decodeComponent(entry.channelEpgId).toLowerCase();
+    final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
+    _timerKeys = {..._timerKeys, '$decodedId:$beginUnix'};
+    notifyListeners();
   }
 
   void stopPlayback() {
