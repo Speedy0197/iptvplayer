@@ -28,7 +28,11 @@ class VersionService {
       if (response.statusCode != 200) return null;
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final rawLatestVersion = data['latest_version'] as String?;
+      // iOS has a separate field so the force-update only triggers once
+      // TestFlight has approved the build, not immediately on release.
+      final versionKey = Platform.isIOS ? 'ios_available_version' : 'latest_version';
+      final rawLatestVersion =
+          (data[versionKey] as String?) ?? (data['latest_version'] as String?);
       if (rawLatestVersion == null || rawLatestVersion.isEmpty) return null;
       final latestVersion = _normalizeVersion(rawLatestVersion);
       if (latestVersion.isEmpty) return null;

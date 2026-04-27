@@ -80,15 +80,65 @@ upload_to_testflight_if_configured() {
 }
 
 update_pages_version_file() {
+  # Preserve the existing ios_available_version so iOS users are not force-updated
+  # until TestFlight has approved the build. Run --mark-ios <version> for that.
+  local current_ios_version
+  current_ios_version="$(python3 -c "import json,sys; d=json.load(open('$VERSION_FILE')); print(d.get('ios_available_version', d.get('latest_version','')))" 2>/dev/null || echo "")"
+  if [[ -z "$current_ios_version" ]]; then
+    current_ios_version="$VERSION"
+  fi
   cat > "$VERSION_FILE" <<EOF
 {
-  "latest_version": "$VERSION"
+  "latest_version": "$VERSION",
+  "ios_available_version": "$current_ios_version"
 }
 EOF
 }
 
+mark_ios_available() {
+  local mark_version="$1"
+  if [[ ! "$mark_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Version must be in semver format, for example 1.2.3" >&2
+    exit 1
+  fi
+
+  cd "$REPO_DIR"
+
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Working tree has uncommitted changes. Commit or stash them before marking iOS." >&2
+    exit 1
+  fi
+
+  local current_latest
+  current_latest="$(python3 -c "import json,sys; d=json.load(open('$VERSION_FILE')); print(d.get('latest_version',''))" 2>/dev/null || echo "")"
+  if [[ -z "$current_latest" ]]; then
+    current_latest="$mark_version"
+  fi
+
+  cat > "$VERSION_FILE" <<EOF
+{
+  "latest_version": "$current_latest",
+  "ios_available_version": "$mark_version"
+}
+EOF
+
+  git add "$VERSION_FILE"
+  git commit -m "chore: mark ios available v$mark_version"
+  git push origin HEAD
+  echo "iOS users will now be prompted to update to $mark_version."
+}
+
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   usage
+  exit 0
+fi
+
+if [[ ${1:-} == "--mark-ios" ]]; then
+  if [[ $# -ne 2 ]]; then
+    echo "Usage: ./scripts/release.sh --mark-ios <version>" >&2
+    exit 1
+  fi
+  mark_ios_available "$2"
   exit 0
 fi
 
@@ -234,4 +284,8 @@ iOS IPA: $DIST_DIR/streampilot-ios.ipa
 macOS DMG: $DIST_DIR/streampilot-macos.dmg
 
 Android APK and Windows installer will be attached by the GitHub Actions tag workflow.
+
+IMPORTANT: iOS users will NOT be force-updated yet.
+Once TestFlight has approved the build, run:
+  ./scripts/release.sh --mark-ios $VERSION
 EOF
