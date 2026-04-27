@@ -43,6 +43,19 @@ class PlaylistStore extends ChangeNotifier {
 
   bool get hasActiveSearch => searchQuery.trim().isNotEmpty;
 
+  Playlist? get selectedPlaylist {
+    final id = selectedPlaylistId;
+    if (id == null) return null;
+    for (final playlist in playlists) {
+      if (playlist.id == id) {
+        return playlist;
+      }
+    }
+    return null;
+  }
+
+  bool get isSelectedPlaylistVuplus => selectedPlaylist?.type == 'vuplus';
+
   // --- Derived list getters ---
 
   List<Group> get filteredGroups => filterGroups(groups, searchQuery);
@@ -281,6 +294,24 @@ class PlaylistStore extends ChangeNotifier {
       loadingEpg = false;
       notifyListeners();
     }
+  }
+
+  Future<void> recordEpgEntry(EpgEntry entry) async {
+    final playlist = selectedPlaylist;
+    if (playlist == null) {
+      throw const ApiException('No selected playlist');
+    }
+    if (playlist.type != 'vuplus') {
+      throw const ApiException('Recording is only supported for VU+ playlists');
+    }
+
+    await api.post('/playlists/${playlist.id}/epg/record', {
+      'channel_epg_id': entry.channelEpgId,
+      'start_time': entry.startTime.toUtc().toIso8601String(),
+      'end_time': entry.endTime.toUtc().toIso8601String(),
+      'title': entry.title,
+      'description': entry.description,
+    });
   }
 
   void stopPlayback() {

@@ -16,6 +16,30 @@ class PlayerPane extends StatelessWidget {
     return '$hh:$mm';
   }
 
+  String _descriptionPreview(String description) {
+    final normalized = description.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) {
+      return 'No description available';
+    }
+    return normalized;
+  }
+
+  Widget _buildEpgEntryCard(BuildContext context, EpgEntry entry) {
+    final timeRange =
+        '${_fmtTime(entry.startTime)} - ${_fmtTime(entry.endTime)}';
+    final description = _descriptionPreview(entry.description);
+
+    return _EpgEntryCard(
+      storageKey: '${entry.channelEpgId}_${entry.startTime.toIso8601String()}',
+      title: entry.title,
+      timeRange: timeRange,
+      description: description,
+      canRecord: store.isSelectedPlaylistVuplus,
+      hasEnded: entry.endTime.isBefore(DateTime.now()),
+      onRecord: () => store.recordEpgEntry(entry),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final Channel? channel = store.nowPlaying;
@@ -67,16 +91,7 @@ class PlayerPane extends StatelessWidget {
                 )
               else
                 ...store.epgEntries.map(
-                  (entry) => Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      title: Text(entry.title),
-                      subtitle: Text(entry.description),
-                      trailing: Text(
-                        '${_fmtTime(entry.startTime)} - ${_fmtTime(entry.endTime)}',
-                      ),
-                    ),
-                  ),
+                  (entry) => _buildEpgEntryCard(context, entry),
                 ),
             ],
           ),
@@ -102,21 +117,131 @@ class PlayerPane extends StatelessWidget {
                       itemCount: store.epgEntries.length,
                       itemBuilder: (context, i) {
                         final e = store.epgEntries[i];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: ListTile(
-                            title: Text(e.title),
-                            subtitle: Text(e.description),
-                            trailing: Text(
-                              '${_fmtTime(e.startTime)} - ${_fmtTime(e.endTime)}',
-                            ),
-                          ),
-                        );
+                        return _buildEpgEntryCard(context, e);
                       },
                     ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _EpgEntryCard extends StatefulWidget {
+  final String storageKey;
+  final String title;
+  final String timeRange;
+  final String description;
+  final bool canRecord;
+  final bool hasEnded;
+  final Future<void> Function() onRecord;
+
+  const _EpgEntryCard({
+    required this.storageKey,
+    required this.title,
+    required this.timeRange,
+    required this.description,
+    required this.canRecord,
+    required this.hasEnded,
+    required this.onRecord,
+  });
+
+  @override
+  State<_EpgEntryCard> createState() => _EpgEntryCardState();
+}
+
+class _EpgEntryCardState extends State<_EpgEntryCard> {
+  bool _expanded = false;
+  bool _savingRecording = false;
+
+  Future<void> _record() async {
+    if (_savingRecording || widget.hasEnded) {
+      return;
+    }
+
+    setState(() {
+      _savingRecording = true;
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.onRecord();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Recording scheduled')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not schedule recording: $e')),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _savingRecording = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        key: PageStorageKey<String>(widget.storageKey),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        onExpansionChanged: (value) {
+          setState(() {
+            _expanded = value;
+          });
+        },
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                widget.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              widget.timeRange,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ],
+        ),
+        subtitle: _expanded
+            ? null
+            : Text(
+                widget.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+        children: [
+          if (widget.canRecord)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                onPressed: widget.hasEnded || _savingRecording ? null : _record,
+                icon: _savingRecording
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.fiber_manual_record),
+                label: Text(widget.hasEnded ? 'Program ended' : 'Record'),
+              ),
+            ),
+          if (widget.canRecord) const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(widget.description),
+          ),
+        ],
       ),
     );
   }

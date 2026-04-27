@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
 import '../../../models/models.dart';
@@ -50,7 +53,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
   String? m3uContent;
   String? m3uFileName;
   String? error;
+  String? vuplusDiscoveryStatus;
   bool submitting = false;
+  bool discoveringVuplus = false;
 
   @override
   void initState() {
@@ -168,7 +173,10 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                           showSelectedIcon: false,
                           segments: const [
                             ButtonSegment(value: 'url', label: Text('URL')),
-                            ButtonSegment(value: 'file', label: Text('File Upload')),
+                            ButtonSegment(
+                              value: 'file',
+                              label: Text('File Upload'),
+                            ),
                           ],
                           selected: {m3uSource},
                           onSelectionChanged: (next) {
@@ -182,16 +190,23 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                         if (m3uSource == 'url')
                           TextField(
                             controller: m3uUrlCtrl,
-                            decoration: const InputDecoration(labelText: 'M3U URL'),
+                            decoration: const InputDecoration(
+                              labelText: 'M3U URL',
+                            ),
                           )
                         else ...[
                           OutlinedButton.icon(
                             onPressed: () async {
-                              final result = await FilePicker.platform.pickFiles(
-                                type: FileType.custom,
-                                allowedExtensions: const ['m3u', 'm3u8', 'txt'],
-                                withData: true,
-                              );
+                              final result = await FilePicker.platform
+                                  .pickFiles(
+                                    type: FileType.custom,
+                                    allowedExtensions: const [
+                                      'm3u',
+                                      'm3u8',
+                                      'txt',
+                                    ],
+                                    withData: true,
+                                  );
                               if (result == null || result.files.isEmpty) {
                                 return;
                               }
@@ -200,7 +215,8 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                               final bytes = pickedFile.bytes;
                               if (bytes == null || bytes.isEmpty) {
                                 setState(() {
-                                  error = 'Could not read the selected M3U file';
+                                  error =
+                                      'Could not read the selected M3U file';
                                 });
                                 return;
                               }
@@ -216,7 +232,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                             },
                             icon: const Icon(Icons.upload_file),
                             label: Text(
-                              m3uFileName == null ? 'Choose M3U File' : 'Replace File',
+                              m3uFileName == null
+                                  ? 'Choose M3U File'
+                                  : 'Replace File',
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -227,7 +245,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                             ),
                             decoration: BoxDecoration(
                               border: Border.all(
-                                color: Theme.of(context).colorScheme.outlineVariant,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
                               ),
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -268,6 +288,32 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                       obscureText: true,
                     ),
                   ] else ...[
+                    OutlinedButton.icon(
+                      onPressed: submitting || discoveringVuplus
+                          ? null
+                          : _discoverVuplus,
+                      icon: discoveringVuplus
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.travel_explore),
+                      label: Text(
+                        discoveringVuplus
+                            ? 'Searching network...'
+                            : 'Auto search VU+ in network',
+                      ),
+                    ),
+                    if (vuplusDiscoveryStatus != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          vuplusDiscoveryStatus!,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: vuplusIpCtrl,
                       decoration: const InputDecoration(
@@ -280,14 +326,16 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                       decoration: const InputDecoration(labelText: 'VU+ port'),
                     ),
                   ],
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: epgUrlCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'EPG XMLTV URL (optional)',
-                      hintText: 'https://example.com/epg.xml',
+                  if (selectedType != 'vuplus') ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: epgUrlCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'EPG XMLTV URL (optional)',
+                        hintText: 'https://example.com/epg.xml',
+                      ),
                     ),
-                  ),
+                  ],
                   if (error != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
@@ -300,8 +348,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                   Row(
                     children: [
                       TextButton(
-                        onPressed:
-                            submitting ? null : () => Navigator.of(context).pop(),
+                        onPressed: submitting
+                            ? null
+                            : () => Navigator.of(context).pop(),
                         child: const Text('Cancel'),
                       ),
                       const SizedBox(width: 12),
@@ -315,7 +364,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                                 const SizedBox(
                                   width: 16,
                                   height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
                                 const SizedBox(width: 8),
                               ],
@@ -324,7 +375,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                                     ? (widget.editing == null
                                           ? 'Creating...'
                                           : 'Saving...')
-                                    : (widget.editing == null ? 'Create' : 'Save'),
+                                    : (widget.editing == null
+                                          ? 'Create'
+                                          : 'Save'),
                               ),
                             ],
                           ),
@@ -350,7 +403,7 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
     try {
       final store = context.read<PlaylistStore>();
       final name = nameCtrl.text.trim();
-      final epgUrl = epgUrlCtrl.text.trim();
+      final epgUrl = selectedType == 'vuplus' ? null : epgUrlCtrl.text.trim();
       if (name.isEmpty) {
         throw const ApiException('Name is required');
       }
@@ -359,7 +412,8 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
         if (m3uSource == 'url' && m3uUrlCtrl.text.trim().isEmpty) {
           throw const ApiException('M3U URL is required');
         }
-        if (m3uSource == 'file' && (m3uContent == null || m3uContent!.trim().isEmpty)) {
+        if (m3uSource == 'file' &&
+            (m3uContent == null || m3uContent!.trim().isEmpty)) {
           throw const ApiException('Please choose an M3U file');
         }
       }
@@ -384,8 +438,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
           await store.createVuplusPlaylist(
             name: name,
             ip: vuplusIpCtrl.text.trim(),
-            port: vuplusPortCtrl.text.trim().isEmpty ? '80' : vuplusPortCtrl.text.trim(),
-            epgUrl: epgUrl,
+            port: vuplusPortCtrl.text.trim().isEmpty
+                ? '80'
+                : vuplusPortCtrl.text.trim(),
           );
         }
       } else {
@@ -404,12 +459,14 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
           xtreamPassword: xtreamPassCtrl.text,
           vuplusIp: vuplusIpCtrl.text.trim(),
           vuplusPort: vuplusPortCtrl.text.trim(),
-          epgUrl: epgUrl,
+          epgUrl: selectedType == 'vuplus' ? '' : epgUrl,
         );
       }
 
       if (!mounted) return;
-      Navigator.of(context).pop(widget.editing == null ? 'Playlist created' : 'Playlist updated');
+      Navigator.of(
+        context,
+      ).pop(widget.editing == null ? 'Playlist created' : 'Playlist updated');
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => error = e.message);
@@ -422,4 +479,195 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
       }
     }
   }
+
+  Future<void> _discoverVuplus() async {
+    setState(() {
+      discoveringVuplus = true;
+      error = null;
+      vuplusDiscoveryStatus = 'Scanning local network for VU+ devices...';
+    });
+
+    try {
+      final candidateIps = await _buildCandidateIps();
+      if (candidateIps.isEmpty) {
+        throw const ApiException('Could not detect local network interface');
+      }
+
+      final discovered = await _findVuplus(candidateIps);
+      if (!mounted) return;
+
+      if (discovered == null) {
+        setState(() {
+          vuplusDiscoveryStatus =
+              'No VU+ box found. Please enter IP / host manually.';
+        });
+        return;
+      }
+
+      setState(() {
+        vuplusIpCtrl.text = discovered.ip;
+        vuplusPortCtrl.text = discovered.port;
+        if (nameCtrl.text.trim().isEmpty) {
+          nameCtrl.text = 'VU+ ${discovered.ip}';
+        }
+        vuplusDiscoveryStatus =
+            'Found VU+ at ${discovered.ip}:${discovered.port}';
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        vuplusDiscoveryStatus = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        vuplusDiscoveryStatus =
+            'Auto search failed. Please enter IP / host manually.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          discoveringVuplus = false;
+        });
+      }
+    }
+  }
+
+  Future<List<String>> _buildCandidateIps() async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLoopback: false,
+    );
+
+    final ordered = <String>[];
+    final seen = <String>{};
+    final prefixes = <String>{};
+
+    for (final iface in interfaces) {
+      for (final addr in iface.addresses) {
+        if (!_isPrivateIPv4(addr.address)) {
+          continue;
+        }
+
+        final octets = addr.address.split('.');
+        if (octets.length != 4) {
+          continue;
+        }
+
+        final prefix = '${octets[0]}.${octets[1]}.${octets[2]}';
+        final host = int.tryParse(octets[3]);
+        prefixes.add(prefix);
+        if (host == null) {
+          continue;
+        }
+
+        for (var step = 1; step <= 20; step++) {
+          final high = host + step;
+          final low = host - step;
+          if (high >= 1 && high <= 254) {
+            final ip = '$prefix.$high';
+            if (seen.add(ip)) {
+              ordered.add(ip);
+            }
+          }
+          if (low >= 1 && low <= 254) {
+            final ip = '$prefix.$low';
+            if (seen.add(ip)) {
+              ordered.add(ip);
+            }
+          }
+        }
+      }
+    }
+
+    if (prefixes.isEmpty) {
+      prefixes.addAll(const ['192.168.1', '192.168.0', '10.0.0']);
+    }
+
+    for (final prefix in prefixes) {
+      for (var host = 1; host <= 254; host++) {
+        final ip = '$prefix.$host';
+        if (seen.add(ip)) {
+          ordered.add(ip);
+        }
+      }
+    }
+
+    return ordered;
+  }
+
+  Future<_VuplusDiscoveryResult?> _findVuplus(List<String> candidateIps) async {
+    final targets = <_VuplusDiscoveryResult>[
+      for (final ip in candidateIps) _VuplusDiscoveryResult(ip: ip, port: '80'),
+      for (final ip in candidateIps)
+        _VuplusDiscoveryResult(ip: ip, port: '8080'),
+    ];
+
+    const batchSize = 24;
+    for (var i = 0; i < targets.length; i += batchSize) {
+      final end = math.min(i + batchSize, targets.length);
+      final batch = targets.sublist(i, end);
+      final checks = await Future.wait(batch.map(_isVuplusEndpoint));
+      for (var j = 0; j < checks.length; j++) {
+        if (checks[j]) {
+          return batch[j];
+        }
+      }
+    }
+
+    return null;
+  }
+
+  Future<bool> _isVuplusEndpoint(_VuplusDiscoveryResult target) async {
+    final candidates = [
+      Uri.parse('http://${target.ip}:${target.port}/web/deviceinfo'),
+      Uri.parse('http://${target.ip}:${target.port}/web/getservices'),
+    ];
+
+    for (final uri in candidates) {
+      try {
+        final response = await http
+            .get(uri)
+            .timeout(const Duration(milliseconds: 600));
+        if (response.statusCode != 200) {
+          continue;
+        }
+        final body = response.body.toLowerCase();
+        if (body.contains('enigma2') ||
+            body.contains('<e2deviceinfo') ||
+            body.contains('<e2servicelist')) {
+          return true;
+        }
+      } catch (_) {
+        // Ignore connection errors while scanning candidates.
+      }
+    }
+
+    return false;
+  }
+
+  bool _isPrivateIPv4(String address) {
+    final parts = address.split('.');
+    if (parts.length != 4) {
+      return false;
+    }
+
+    final octets = parts.map(int.tryParse).toList();
+    if (octets.any((value) => value == null)) {
+      return false;
+    }
+
+    final a = octets[0]!;
+    final b = octets[1]!;
+    return a == 10 ||
+        (a == 172 && b >= 16 && b <= 31) ||
+        (a == 192 && b == 168);
+  }
+}
+
+class _VuplusDiscoveryResult {
+  final String ip;
+  final String port;
+
+  const _VuplusDiscoveryResult({required this.ip, required this.port});
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"database/sql"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -52,6 +53,19 @@ type vuplusEPGEvent struct {
 	Title               string `xml:"e2eventtitle"`
 	Description         string `xml:"e2eventdescription"`
 	DescriptionExtended string `xml:"e2eventdescriptionextended"`
+}
+
+type vuplusSimpleResult struct {
+	State     string `xml:"e2state"`
+	StateText string `xml:"e2statetext"`
+}
+
+type vuplusRecordEPGRequest struct {
+	ChannelEpgID string `json:"channel_epg_id"`
+	StartTime    string `json:"start_time"`
+	EndTime      string `json:"end_time"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
 }
 
 var xmltvLayouts = []string{
@@ -745,6 +759,149 @@ func GetEPG(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[EPG-DEBUG] GetEPG result playlist_id=%d requested_channel=%q normalized_channel=%q entries=%d", playlistID, channelEpgID, normalizedChannelEpgID, len(entries))
 	writeJSON(w, http.StatusOK, entries)
+}
+
+func RecordVuplusEPG(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	playlistID, err := strconv.ParseInt(chi.URLParam(r, "playlist_id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid playlist_id")
+		return
+	}
+
+	if _, ok := ownsPlaylist(userID, playlistID); !ok {
+		writeError(w, http.StatusNotFound, "playlist not found")
+		return
+	}
+
+	var req vuplusRecordEPGRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	channelEpgID := strings.TrimSpace(req.ChannelEpgID)
+	if channelEpgID == "" {
+		writeError(w, http.StatusBadRequest, "channel_epg_id is required")
+		return
+	}
+
+	startTime, err := parseRequestTime(strings.TrimSpace(req.StartTime))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid start_time")
+		return
+	}
+	endTime, err := parseRequestTime(strings.TrimSpace(req.EndTime))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid end_time")
+		return
+	}
+	if !endTime.After(startTime) {
+		writeError(w, http.StatusBadRequest, "end_time must be after start_time")
+		return
+	}
+
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = "Recording"
+	}
+	description := strings.TrimSpace(req.Description)
+
+	var playlistType string
+	var vuplusIP string
+	var vuplusPort string
+	if err := database.DB.QueryRow(
+		`SELECT type, COALESCE(vuplus_ip, ''), COALESCE(vuplus_port, '80') FROM playlists WHERE id = ?`,
+		playlistID,
+	).Scan(&playlistType, &vuplusIP, &vuplusPort); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	if playlistType != "vuplus" {
+		writeError(w, http.StatusBadRequest, "recording is only supported for vuplus playlists")
+		return
+	}
+
+	vuplusIP = strings.TrimSpace(vuplusIP)
+	vuplusPort = strings.TrimSpace(vuplusPort)
+	if vuplusIP == "" {
+		writeError(w, http.StatusBadRequest, "vuplus_ip is missing")
+		return
+	}
+	if vuplusPort == "" {
+		vuplusPort = "80"
+	}
+
+	if err := createVuplusRecordingTimer(vuplusIP, vuplusPort, channelEpgID, startTime, endTime, title, description); err != nil {
+		log.Printf("Vu+ recording timer create failed playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, err)
+		writeError(w, http.StatusBadGateway, "failed to create recording on vuplus device")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
+}
+
+func createVuplusRecordingTimer(
+	vuplusIP, vuplusPort, channelEpgID string,
+	startTime, endTime time.Time,
+	title, description string,
+) error {
+	values := url.Values{}
+	values.Set("sRef", channelEpgID)
+	values.Set("begin", strconv.FormatInt(startTime.UTC().Unix(), 10))
+	values.Set("end", strconv.FormatInt(endTime.UTC().Unix(), 10))
+	values.Set("name", title)
+	values.Set("description", description)
+	values.Set("disabled", "0")
+	values.Set("justplay", "0")
+	values.Set("afterevent", "3")
+	values.Set("repeated", "0")
+
+	timerURL := fmt.Sprintf("http://%s:%s/web/timeradd?%s", vuplusIP, vuplusPort, values.Encode())
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(timerURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	body, err := readPossiblyGzippedBody(resp.Body, resp.Header.Get("Content-Encoding"))
+	if err != nil {
+		return err
+	}
+
+	var result vuplusSimpleResult
+	if err := xml.Unmarshal(body, &result); err != nil {
+		return nil
+	}
+
+	state := strings.ToLower(strings.TrimSpace(result.State))
+	if state == "false" || state == "0" || state == "no" {
+		msg := strings.TrimSpace(result.StateText)
+		if msg == "" {
+			msg = "timer creation failed"
+		}
+		return fmt.Errorf(msg)
+	}
+
+	return nil
+}
+
+func parseRequestTime(raw string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid timestamp %q", raw)
 }
 
 func refreshEPG(playlistID int64) {
