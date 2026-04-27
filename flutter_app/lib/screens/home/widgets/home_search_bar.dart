@@ -20,8 +20,49 @@ class HomeSearchBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final navigationMode = MediaQuery.maybeNavigationModeOf(context);
+    final directionalNavigation = navigationMode == NavigationMode.directional;
+
+    Widget buildSearchButton({required Color backgroundColor}) {
+      return Semantics(
+        button: true,
+        label: 'Search channels and groups',
+        child: Material(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: onTap,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(Icons.search, size: 20),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Search channels, groups',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     if (inAppBar) {
       final colorScheme = Theme.of(context).colorScheme;
+      if (directionalNavigation) {
+        return buildSearchButton(
+          backgroundColor: colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.6,
+          ),
+        );
+      }
       return TextField(
         controller: searchCtrl,
         autofocus: false,
@@ -51,6 +92,11 @@ class HomeSearchBar extends StatelessWidget {
           isDense: true,
         ),
         onTap: onTap,
+      );
+    }
+    if (directionalNavigation) {
+      return buildSearchButton(
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
       );
     }
     return TextField(

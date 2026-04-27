@@ -180,6 +180,224 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Widget _buildLoginForm(ThemeData theme, AuthStore auth) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(
+            Icons.live_tv_rounded,
+            size: 36,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Welcome back',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Sign in to continue watching.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 20),
+          TextFormField(
+            controller: _emailCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Email',
+              prefixIcon: Icon(Icons.alternate_email),
+            ),
+            keyboardType: TextInputType.emailAddress,
+            validator: (value) {
+              final v = value?.trim() ?? '';
+              if (v.isEmpty) {
+                return 'Required';
+              }
+              if (!v.contains('@')) {
+                return 'Enter a valid email';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _passwordCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Password',
+              prefixIcon: Icon(Icons.lock_outline),
+            ),
+            obscureText: true,
+            validator: (value) =>
+                value == null || value.isEmpty ? 'Required' : null,
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF3A1518),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF7F1D1D)),
+              ),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Color(0xFFFCA5A5)),
+              ),
+            ),
+            if (_showVerifyAction) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: auth.busy
+                    ? null
+                    : () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => RegisterScreen(
+                              initialEmail: _emailCtrl.text.trim(),
+                              startInVerification: true,
+                            ),
+                          ),
+                        );
+                      },
+                child: const Text('Enter verification code'),
+              ),
+            ],
+          ],
+          const SizedBox(height: 18),
+          FilledButton(
+            onPressed: auth.busy ? null : _submit,
+            child: auth.busy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Sign In'),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: auth.busy
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const ForgotPasswordScreen(),
+                        ),
+                      );
+                    },
+              child: const Text('Forgot password?'),
+            ),
+          ),
+          const SizedBox(height: 4),
+          TextButton(
+            onPressed: auth.busy
+                ? null
+                : () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const RegisterScreen(),
+                      ),
+                    );
+                  },
+            child: const Text('Create account'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTvLoginPanel(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'TV quick login',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Scan this QR code with your phone, sign in there, and this TV signs in automatically.',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF111827),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF374151)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_startingTvLogin)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else if (_tvLoginUrl != null) ...[
+                Center(
+                  child: Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(10),
+                    child: QrImageView(
+                      data: _tvLoginUrl!,
+                      size: 170,
+                      backgroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Enter code ${_tvUserCode ?? '-'} on your phone',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (_tvExpiresAt != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Expires at ${TimeOfDay.fromDateTime(_tvExpiresAt!).format(context)}',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ],
+              if (_tvLoginError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _tvLoginError!,
+                  style: const TextStyle(color: Color(0xFFFCA5A5)),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _startingTvLogin ? null : _startTvLogin,
+                icon: const Icon(Icons.qr_code_2),
+                label: const Text('Generate new QR code'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthStore>();
@@ -211,257 +429,40 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   child: Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 420),
+                      constraints: const BoxConstraints(maxWidth: 980),
                       child: Card(
                         margin: const EdgeInsets.all(8),
                         child: Padding(
                           padding: const EdgeInsets.all(24),
-                          child: Form(
-                            key: _formKey,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Icon(
-                                  Icons.live_tv_rounded,
-                                  size: 36,
-                                  color: theme.colorScheme.primary,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Welcome back',
-                                  style: theme.textTheme.headlineSmall
-                                      ?.copyWith(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Sign in to continue watching.',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                                TextFormField(
-                                  controller: _emailCtrl,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Email',
-                                    prefixIcon: Icon(Icons.alternate_email),
-                                  ),
-                                  keyboardType: TextInputType.emailAddress,
-                                  validator: (value) {
-                                    final v = value?.trim() ?? '';
-                                    if (v.isEmpty) {
-                                      return 'Required';
-                                    }
-                                    if (!v.contains('@')) {
-                                      return 'Enter a valid email';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 12),
-                                TextFormField(
-                                  controller: _passwordCtrl,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Password',
-                                    prefixIcon: Icon(Icons.lock_outline),
-                                  ),
-                                  obscureText: true,
-                                  validator: (value) =>
-                                      value == null || value.isEmpty
-                                      ? 'Required'
-                                      : null,
-                                ),
-                                if (_error != null) ...[
-                                  const SizedBox(height: 12),
-                                  Container(
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF3A1518),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: const Color(0xFF7F1D1D),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _error!,
-                                      style: const TextStyle(
-                                        color: Color(0xFFFCA5A5),
-                                      ),
-                                    ),
-                                  ),
-                                  if (_showVerifyAction) ...[
-                                    const SizedBox(height: 8),
-                                    TextButton(
-                                      onPressed: auth.busy
-                                          ? null
-                                          : () {
-                                              Navigator.of(context).push(
-                                                MaterialPageRoute<void>(
-                                                  builder: (_) =>
-                                                      RegisterScreen(
-                                                        initialEmail: _emailCtrl
-                                                            .text
-                                                            .trim(),
-                                                        startInVerification:
-                                                            true,
-                                                      ),
-                                                ),
-                                              );
-                                            },
-                                      child: const Text(
-                                        'Enter verification code',
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                                const SizedBox(height: 18),
-                                FilledButton(
-                                  onPressed: auth.busy ? null : _submit,
-                                  child: auth.busy
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : const Text('Sign In'),
-                                ),
-                                const SizedBox(height: 16),
-                                Row(
+                          child: LayoutBuilder(
+                            builder: (context, cardConstraints) {
+                              final twoColumn = cardConstraints.maxWidth >= 760;
+                              if (!twoColumn) {
+                                return Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
-                                    const Expanded(child: Divider()),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                      ),
-                                      child: Text(
-                                        'TV quick login',
-                                        style: theme.textTheme.labelMedium,
-                                      ),
-                                    ),
-                                    const Expanded(child: Divider()),
+                                    _buildLoginForm(theme, auth),
+                                    const SizedBox(height: 16),
+                                    const Divider(),
+                                    const SizedBox(height: 16),
+                                    _buildTvLoginPanel(theme),
                                   ],
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Scan this QR code with your phone, sign in there, and this TV signs in automatically.',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: Colors.white70,
+                                );
+                              }
+
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(child: _buildLoginForm(theme, auth)),
+                                  const SizedBox(width: 24),
+                                  SizedBox(
+                                    width: 320,
+                                    child: _buildTvLoginPanel(theme),
                                   ),
-                                ),
-                                const SizedBox(height: 12),
-                                Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF111827),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: const Color(0xFF374151),
-                                    ),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      if (_startingTvLogin)
-                                        const Center(
-                                          child: Padding(
-                                            padding: EdgeInsets.symmetric(
-                                              vertical: 24,
-                                            ),
-                                            child: CircularProgressIndicator(),
-                                          ),
-                                        )
-                                      else if (_tvLoginUrl != null) ...[
-                                        Center(
-                                          child: Container(
-                                            color: Colors.white,
-                                            padding: const EdgeInsets.all(10),
-                                            child: QrImageView(
-                                              data: _tvLoginUrl!,
-                                              size: 170,
-                                              backgroundColor: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 10),
-                                        Text(
-                                          'Enter code ${_tvUserCode ?? '-'} on your phone',
-                                          textAlign: TextAlign.center,
-                                          style: theme.textTheme.titleSmall
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                        ),
-                                        if (_tvExpiresAt != null) ...[
-                                          const SizedBox(height: 6),
-                                          Text(
-                                            'Expires at ${TimeOfDay.fromDateTime(_tvExpiresAt!).format(context)}',
-                                            textAlign: TextAlign.center,
-                                            style: theme.textTheme.bodySmall
-                                                ?.copyWith(
-                                                  color: Colors.white70,
-                                                ),
-                                          ),
-                                        ],
-                                      ],
-                                      if (_tvLoginError != null) ...[
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          _tvLoginError!,
-                                          style: const TextStyle(
-                                            color: Color(0xFFFCA5A5),
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ],
-                                      const SizedBox(height: 10),
-                                      OutlinedButton.icon(
-                                        onPressed: _startingTvLogin
-                                            ? null
-                                            : _startTvLogin,
-                                        icon: const Icon(Icons.qr_code_2),
-                                        label: const Text(
-                                          'Generate new QR code',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton(
-                                    onPressed: auth.busy
-                                        ? null
-                                        : () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (_) =>
-                                                    const ForgotPasswordScreen(),
-                                              ),
-                                            );
-                                          },
-                                    child: const Text('Forgot password?'),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                TextButton(
-                                  onPressed: auth.busy
-                                      ? null
-                                      : () {
-                                          Navigator.of(context).push(
-                                            MaterialPageRoute<void>(
-                                              builder: (_) =>
-                                                  const RegisterScreen(),
-                                            ),
-                                          );
-                                        },
-                                  child: const Text('Create account'),
-                                ),
-                              ],
-                            ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                       ),

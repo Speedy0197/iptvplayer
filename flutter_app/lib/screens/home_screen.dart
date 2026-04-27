@@ -334,6 +334,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _showSearchDialog() async {
     if (!mounted || _searchDialogOpen) return;
 
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+
     if (!_searchDialogPending) {
       _searchDialogPending = true;
       unawaited(
@@ -370,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       TextFormField(
                         initialValue: _searchCtrl.text,
-                        autofocus: true,
+                        autofocus: !directionalNavigation,
                         decoration: const InputDecoration(
                           labelText: 'Search channels, groups',
                           prefixIcon: Icon(Icons.search),
