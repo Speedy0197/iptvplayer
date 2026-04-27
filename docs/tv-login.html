@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StreamPilot TV Login</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #111827;
+      --line: #2b3242;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --accent: #14b8a6;
+      --danger: #fca5a5;
+      --ok: #86efac;
+      --radius: 14px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(50rem 26rem at -15% -10%, #1f2937 0%, transparent 65%),
+        radial-gradient(46rem 24rem at 110% -10%, #0f766e 0%, transparent 65%),
+        var(--bg);
+      padding: 20px;
+    }
+
+    .card {
+      width: min(520px, 94vw);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 22px;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+
+    p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    form {
+      margin-top: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    label {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    input {
+      width: 100%;
+      margin-top: 6px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 11px 12px;
+      color: var(--text);
+      background: #0b1220;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.18);
+    }
+
+    button {
+      margin-top: 4px;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-weight: 700;
+      color: #042f2e;
+      background: linear-gradient(130deg, #2dd4bf, #14b8a6);
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: default;
+    }
+
+    .msg {
+      margin-top: 12px;
+      font-size: 0.95rem;
+      min-height: 1.4em;
+    }
+
+    .msg.error {
+      color: var(--danger);
+    }
+
+    .msg.success {
+      color: var(--ok);
+    }
+
+    .small {
+      margin-top: 14px;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Sign in to StreamPilot TV</h1>
+    <p>Log in here to approve the sign-in request shown on your TV.</p>
+
+    <form id="tv-login-form">
+      <label>
+        TV code
+        <input id="user-code" name="userCode" type="text" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit code from TV" required />
+      </label>
+
+      <label>
+        Email
+        <input id="email" name="email" type="email" autocomplete="email" required />
+      </label>
+
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </label>
+
+      <button id="submit-btn" type="submit">Approve TV Login</button>
+    </form>
+
+    <div id="message" class="msg" role="status" aria-live="polite"></div>
+    <p class="small">After success, return to your TV. It will log in automatically.</p>
+  </main>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var deviceCode = (params.get('device_code') || '').trim();
+      var apiBase = (params.get('api_base') || 'https://iptv.florian-zug.de/api/v1').trim();
+
+      var form = document.getElementById('tv-login-form');
+      var codeInput = document.getElementById('user-code');
+      var emailInput = document.getElementById('email');
+      var passwordInput = document.getElementById('password');
+      var submitBtn = document.getElementById('submit-btn');
+      var message = document.getElementById('message');
+
+      function setMessage(text, kind) {
+        message.textContent = text || '';
+        message.className = 'msg' + (kind ? ' ' + kind : '');
+      }
+
+      if (!deviceCode) {
+        setMessage('Missing device code in QR link. Scan the QR code from your TV again.', 'error');
+        submitBtn.disabled = true;
+        return;
+      }
+
+      codeInput.addEventListener('input', function () {
+        codeInput.value = codeInput.value.replace(/\D+/g, '').slice(0, 6);
+      });
+
+      form.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        setMessage('', '');
+
+        var userCode = (codeInput.value || '').trim();
+        var email = (emailInput.value || '').trim();
+        var password = passwordInput.value || '';
+
+        if (!userCode || !email || !password) {
+          setMessage('Please complete all fields.', 'error');
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Approving...';
+
+        try {
+          var response = await fetch(apiBase + '/auth/tv/approve', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              device_code: deviceCode,
+              user_code: userCode,
+              email: email,
+              password: password
+            })
+          });
+
+          var payload = null;
+          try {
+            payload = await response.json();
+          } catch (_) {
+            payload = null;
+          }
+
+          if (!response.ok) {
+            var err = payload && payload.error ? payload.error : 'Unable to approve TV login.';
+            throw new Error(err);
+          }
+
+          setMessage('Success. Return to your TV to continue.', 'success');
+          passwordInput.value = '';
+        } catch (err) {
+          setMessage(err && err.message ? err.message : 'Login approval failed.', 'error');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Approve TV Login';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

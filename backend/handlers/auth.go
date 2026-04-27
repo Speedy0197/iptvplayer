@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"crypto/tls"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -36,6 +36,7 @@ var (
 	ResetTokenTTL   = time.Hour
 	ResetRateWindow = time.Minute
 	ResetRateLimit  = 5
+	TVLoginTTL      = 10 * time.Minute
 
 	resetRateMu      sync.Mutex
 	resetRateTracker = map[string][]time.Time{}
@@ -146,6 +147,205 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		"user_id":  id,
 		"username": identity,
 		"email":    emailValue,
+	})
+}
+
+func StartTVLogin(w http.ResponseWriter, r *http.Request) {
+	cleanupExpiredTVLoginSessions()
+
+	deviceCode, deviceCodeHash, err := newTVDeviceCode()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate device code")
+		return
+	}
+
+	userCode, userCodeHash, err := newTVUserCode(deviceCode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate user code")
+		return
+	}
+
+	expiresAt := time.Now().UTC().Add(TVLoginTTL)
+	if _, err := database.DB.Exec(
+		`INSERT INTO tv_login_sessions (device_code_hash, user_code_hash, expires_at) VALUES (?, ?, ?)`,
+		deviceCodeHash, userCodeHash, expiresAt,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create login session")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"device_code":           deviceCode,
+		"user_code":             userCode,
+		"expires_at":            expiresAt.Format(time.RFC3339),
+		"poll_interval_seconds": 3,
+	})
+}
+
+func ApproveTVLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceCode string `json:"device_code"`
+		UserCode   string `json:"user_code"`
+		Email      string `json:"email"`
+		Password   string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "device_code, user_code, email and password required")
+		return
+	}
+
+	deviceCode := strings.TrimSpace(req.DeviceCode)
+	userCode := strings.TrimSpace(req.UserCode)
+	if deviceCode == "" || userCode == "" || strings.TrimSpace(req.Email) == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "device_code, user_code, email and password required")
+		return
+	}
+
+	deviceCodeHash := hashTVDeviceCode(deviceCode)
+	userCodeHash := hashTVUserCode(deviceCode, userCode)
+
+	var sessionID int64
+	var storedUserCodeHash string
+	var approvedAt sql.NullTime
+	err := database.DB.QueryRow(`
+		SELECT id, user_code_hash, approved_at
+		FROM tv_login_sessions
+		WHERE device_code_hash = ?
+		  AND claimed_at IS NULL
+		  AND expires_at > CURRENT_TIMESTAMP
+		LIMIT 1
+	`, deviceCodeHash).Scan(&sessionID, &storedUserCodeHash, &approvedAt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired tv login session")
+		return
+	}
+
+	if storedUserCodeHash != userCodeHash {
+		writeError(w, http.StatusUnauthorized, "invalid tv code")
+		return
+	}
+	if approvedAt.Valid {
+		writeJSON(w, http.StatusOK, map[string]string{"message": "tv login already approved"})
+		return
+	}
+
+	id, hash, storedEmail, storedUsername, emailVerified, found := lookupUserByIdentifier(req.Email)
+	if !found || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if !emailVerified {
+		writeError(w, http.StatusForbidden, "email not verified")
+		return
+	}
+
+	token, err := generateToken(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	identity := storedUsername
+	emailValue := ""
+	if storedEmail.Valid {
+		emailValue = storedEmail.String
+		identity = storedEmail.String
+	}
+
+	result, err := database.DB.Exec(`
+		UPDATE tv_login_sessions
+		SET approved_at = CURRENT_TIMESTAMP,
+		    approved_user_id = ?,
+		    approved_token = ?,
+		    approved_username = ?,
+		    approved_email = ?
+		WHERE id = ?
+		  AND approved_at IS NULL
+		  AND claimed_at IS NULL
+	`, id, token, identity, emailValue, sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to approve tv login")
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		writeError(w, http.StatusConflict, "tv login session no longer valid")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "tv login approved"})
+}
+
+func PollTVLogin(w http.ResponseWriter, r *http.Request) {
+	deviceCode := strings.TrimSpace(r.URL.Query().Get("device_code"))
+	if deviceCode == "" {
+		writeError(w, http.StatusBadRequest, "device_code required")
+		return
+	}
+
+	deviceCodeHash := hashTVDeviceCode(deviceCode)
+
+	var sessionID int64
+	var approvedAt sql.NullTime
+	var claimedAt sql.NullTime
+	var expiresAt time.Time
+	var token sql.NullString
+	var userID sql.NullInt64
+	var username sql.NullString
+	var email sql.NullString
+	err := database.DB.QueryRow(`
+		SELECT id, approved_at, claimed_at, expires_at, approved_token, approved_user_id, approved_username, approved_email
+		FROM tv_login_sessions
+		WHERE device_code_hash = ?
+		LIMIT 1
+	`, deviceCodeHash).Scan(&sessionID, &approvedAt, &claimedAt, &expiresAt, &token, &userID, &username, &email)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired tv login session")
+		return
+	}
+
+	if claimedAt.Valid {
+		writeError(w, http.StatusGone, "tv login session already used")
+		return
+	}
+	if expiresAt.Before(time.Now().UTC()) {
+		writeError(w, http.StatusGone, "tv login session expired")
+		return
+	}
+	if !approvedAt.Valid {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":     "pending",
+			"expires_at": expiresAt.Format(time.RFC3339),
+		})
+		return
+	}
+
+	result, err := database.DB.Exec(`
+		UPDATE tv_login_sessions
+		SET claimed_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+		  AND claimed_at IS NULL
+	`, sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete tv login")
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		writeError(w, http.StatusGone, "tv login session already used")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "approved",
+		"auth": map[string]any{
+			"token":    token.String,
+			"user_id":  userID.Int64,
+			"username": username.String,
+			"email":    email.String,
+		},
 	})
 }
 
@@ -518,6 +718,24 @@ func newVerificationCode(userID int64) (string, string, error) {
 	return code, hashVerificationCode(userID, code), nil
 }
 
+func newTVDeviceCode() (string, string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
+	code := hex.EncodeToString(raw)
+	return code, hashTVDeviceCode(code), nil
+}
+
+func newTVUserCode(deviceCode string) (string, string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", "", err
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+	return code, hashTVUserCode(deviceCode, code), nil
+}
+
 func hashResetCode(userID int64, code string) string {
 	input := fmt.Sprintf("%d:%s", userID, strings.TrimSpace(code))
 	s := sha256.Sum256([]byte(input))
@@ -526,6 +744,18 @@ func hashResetCode(userID int64, code string) string {
 
 func hashVerificationCode(userID int64, code string) string {
 	input := fmt.Sprintf("verify:%d:%s", userID, strings.TrimSpace(code))
+	s := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(s[:])
+}
+
+func hashTVDeviceCode(code string) string {
+	input := "tv-device:" + strings.TrimSpace(code)
+	s := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(s[:])
+}
+
+func hashTVUserCode(deviceCode, userCode string) string {
+	input := fmt.Sprintf("tv-user:%s:%s", strings.TrimSpace(deviceCode), strings.TrimSpace(userCode))
 	s := sha256.Sum256([]byte(input))
 	return hex.EncodeToString(s[:])
 }
@@ -569,6 +799,12 @@ func cleanupExpiredVerificationTokens() {
 func cleanupExpiredResetTokens() {
 	if _, err := database.DB.Exec(`DELETE FROM password_reset_tokens WHERE used_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP`); err != nil {
 		log.Printf("failed to cleanup reset tokens: %v", err)
+	}
+}
+
+func cleanupExpiredTVLoginSessions() {
+	if _, err := database.DB.Exec(`DELETE FROM tv_login_sessions WHERE claimed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP`); err != nil {
+		log.Printf("failed to cleanup tv login sessions: %v", err)
 	}
 }
 

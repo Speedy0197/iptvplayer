@@ -97,6 +97,8 @@ EOF
 
 mark_ios_available() {
   local mark_version="$1"
+  require_cmd gh
+
   if [[ ! "$mark_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Version must be in semver format, for example 1.2.3" >&2
     exit 1
@@ -125,6 +127,16 @@ EOF
   git add "$VERSION_FILE"
   git commit -m "chore: mark ios available v$mark_version"
   git push origin HEAD
+
+  local current_branch
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if gh workflow run deploy-pages.yml --ref "$current_branch"; then
+    echo "Triggered GitHub Pages deployment workflow (deploy-pages.yml)."
+  else
+    echo "Warning: Could not trigger GitHub Pages deployment automatically." >&2
+    echo "Run this manually: gh workflow run deploy-pages.yml --ref $current_branch" >&2
+  fi
+
   echo "iOS users will now be prompted to update to $mark_version."
 }
 

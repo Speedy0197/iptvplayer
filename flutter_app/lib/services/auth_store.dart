@@ -78,6 +78,17 @@ class AuthStore extends ChangeNotifier {
     }
   }
 
+  Future<void> completeLoginFromJson(Map<String, dynamic> json) async {
+    busy = true;
+    notifyListeners();
+    try {
+      await _persist(AuthResponse.fromJson(json));
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> register(String email, String password) async {
     busy = true;
     notifyListeners();

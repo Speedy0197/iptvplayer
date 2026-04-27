@@ -25,6 +25,7 @@ func main() {
 	resetTokenTTLMinutes := getEnv("RESET_TOKEN_TTL_MINUTES", "60")
 	resetRateWindowSeconds := getEnv("RESET_RATE_WINDOW_SECONDS", "60")
 	resetRateLimit := getEnv("RESET_RATE_LIMIT", "5")
+	tvLoginTTLMinutes := getEnv("TV_LOGIN_TTL_MINUTES", "10")
 
 	database.Init(dbPath)
 	middleware.JWTSecret = []byte(jwtSecret)
@@ -38,6 +39,7 @@ func main() {
 	handlers.ResetTokenTTL = parseEnvDurationMinutes(resetTokenTTLMinutes, time.Hour)
 	handlers.ResetRateWindow = parseEnvDurationSeconds(resetRateWindowSeconds, time.Minute)
 	handlers.ResetRateLimit = parseEnvInt(resetRateLimit, 5)
+	handlers.TVLoginTTL = parseEnvDurationMinutes(tvLoginTTLMinutes, 10*time.Minute)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
@@ -55,6 +57,9 @@ func main() {
 		r.Post("/auth/verify-email", handlers.VerifyEmail)
 		r.Post("/auth/resend-verification", handlers.ResendVerification)
 		r.Post("/auth/login", handlers.Login)
+		r.Post("/auth/tv/start", handlers.StartTVLogin)
+		r.Get("/auth/tv/poll", handlers.PollTVLogin)
+		r.Post("/auth/tv/approve", handlers.ApproveTVLogin)
 		r.Post("/auth/request-reset", handlers.RequestPasswordReset)
 		r.Post("/auth/verify-reset", handlers.VerifyResetToken)
 		r.Post("/auth/reset-password", handlers.ResetPassword)

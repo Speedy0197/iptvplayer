@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
+import '../config/app_config.dart';
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
 import 'forgot_password_screen.dart';
@@ -20,9 +24,24 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String? _error;
   bool _showVerifyAction = false;
+  bool _startingTvLogin = false;
+  bool _pollingTvLogin = false;
+  String? _tvLoginError;
+  String? _tvDeviceCode;
+  String? _tvUserCode;
+  String? _tvLoginUrl;
+  DateTime? _tvExpiresAt;
+  Timer? _tvPollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_startTvLogin());
+  }
 
   @override
   void dispose() {
+    _tvPollTimer?.cancel();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
@@ -49,6 +68,115 @@ class _LoginScreenState extends State<LoginScreen> {
         _error = 'Login failed';
         _showVerifyAction = false;
       });
+    }
+  }
+
+  Future<void> _startTvLogin() async {
+    if (_startingTvLogin) return;
+    final auth = context.read<AuthStore>();
+
+    setState(() {
+      _startingTvLogin = true;
+      _tvLoginError = null;
+      _tvDeviceCode = null;
+      _tvUserCode = null;
+      _tvLoginUrl = null;
+      _tvExpiresAt = null;
+    });
+
+    try {
+      final data =
+          await auth.api.post('/auth/tv/start') as Map<String, dynamic>;
+      final deviceCode = (data['device_code'] as String?)?.trim();
+      final userCode = (data['user_code'] as String?)?.trim();
+      final expiresRaw = (data['expires_at'] as String?)?.trim();
+      final expiresAt = expiresRaw != null && expiresRaw.isNotEmpty
+          ? DateTime.tryParse(expiresRaw)?.toLocal()
+          : null;
+      if (deviceCode == null ||
+          deviceCode.isEmpty ||
+          userCode == null ||
+          userCode.isEmpty) {
+        throw const ApiException('Invalid TV login response');
+      }
+
+      final pageBase = AppConfig.downloadPageUrl.endsWith('/')
+          ? AppConfig.downloadPageUrl
+          : '${AppConfig.downloadPageUrl}/';
+      final loginUrl =
+          '${pageBase}tv-login.html?device_code=${Uri.encodeQueryComponent(deviceCode)}&api_base=${Uri.encodeQueryComponent(auth.api.baseUrl)}';
+
+      if (!mounted) return;
+      setState(() {
+        _tvDeviceCode = deviceCode;
+        _tvUserCode = userCode;
+        _tvLoginUrl = loginUrl;
+        _tvExpiresAt = expiresAt;
+      });
+
+      _tvPollTimer?.cancel();
+      _tvPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+        unawaited(_pollTvLogin());
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _tvLoginError = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _tvLoginError = 'Unable to start TV login right now.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _startingTvLogin = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _pollTvLogin() async {
+    final deviceCode = _tvDeviceCode;
+    if (_pollingTvLogin || deviceCode == null || deviceCode.isEmpty) {
+      return;
+    }
+
+    _pollingTvLogin = true;
+    final auth = context.read<AuthStore>();
+    try {
+      final response = await auth.api.get(
+        '/auth/tv/poll?device_code=${Uri.encodeQueryComponent(deviceCode)}',
+      );
+      if (response is! Map<String, dynamic>) {
+        return;
+      }
+
+      final status = (response['status'] as String?)?.toLowerCase();
+      if (status != 'approved') {
+        return;
+      }
+
+      final authJson = response['auth'];
+      if (authJson is! Map<String, dynamic>) {
+        return;
+      }
+
+      _tvPollTimer?.cancel();
+      await auth.completeLoginFromJson(authJson);
+    } on ApiException catch (e) {
+      final message = e.message.toLowerCase();
+      if (message.contains('expired') || message.contains('used')) {
+        _tvPollTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _tvLoginError = 'QR code expired. Generate a new one.';
+          });
+        }
+      }
+    } finally {
+      _pollingTvLogin = false;
     }
   }
 
@@ -199,6 +327,108 @@ class _LoginScreenState extends State<LoginScreen> {
                                           ),
                                         )
                                       : const Text('Sign In'),
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  children: [
+                                    const Expanded(child: Divider()),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                      ),
+                                      child: Text(
+                                        'TV quick login',
+                                        style: theme.textTheme.labelMedium,
+                                      ),
+                                    ),
+                                    const Expanded(child: Divider()),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Scan this QR code with your phone, sign in there, and this TV signs in automatically.',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF111827),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0xFF374151),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      if (_startingTvLogin)
+                                        const Center(
+                                          child: Padding(
+                                            padding: EdgeInsets.symmetric(
+                                              vertical: 24,
+                                            ),
+                                            child: CircularProgressIndicator(),
+                                          ),
+                                        )
+                                      else if (_tvLoginUrl != null) ...[
+                                        Center(
+                                          child: Container(
+                                            color: Colors.white,
+                                            padding: const EdgeInsets.all(10),
+                                            child: QrImageView(
+                                              data: _tvLoginUrl!,
+                                              size: 170,
+                                              backgroundColor: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Text(
+                                          'Enter code ${_tvUserCode ?? '-'} on your phone',
+                                          textAlign: TextAlign.center,
+                                          style: theme.textTheme.titleSmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                        ),
+                                        if (_tvExpiresAt != null) ...[
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            'Expires at ${TimeOfDay.fromDateTime(_tvExpiresAt!).format(context)}',
+                                            textAlign: TextAlign.center,
+                                            style: theme.textTheme.bodySmall
+                                                ?.copyWith(
+                                                  color: Colors.white70,
+                                                ),
+                                          ),
+                                        ],
+                                      ],
+                                      if (_tvLoginError != null) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          _tvLoginError!,
+                                          style: const TextStyle(
+                                            color: Color(0xFFFCA5A5),
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ],
+                                      const SizedBox(height: 10),
+                                      OutlinedButton.icon(
+                                        onPressed: _startingTvLogin
+                                            ? null
+                                            : _startTvLogin,
+                                        icon: const Icon(Icons.qr_code_2),
+                                        label: const Text(
+                                          'Generate new QR code',
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                                 Align(
                                   alignment: Alignment.centerRight,

@@ -66,8 +66,8 @@ class UpdateService {
       // Mount the DMG; user drags to Applications.
       await Process.run('open', [filePath]);
     } else if (Platform.isWindows) {
-      // /SILENT: no wizard, /CLOSEAPPLICATIONS: installer will close this process.
-      Process.run(filePath, ['/SILENT', '/CLOSEAPPLICATIONS']);
+      // Launch the installer visibly so users can confirm/update via the wizard.
+      await OpenFilex.open(filePath);
       exit(0);
     }
   }
