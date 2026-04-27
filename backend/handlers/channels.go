@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -111,6 +112,89 @@ func ListChannels(w http.ResponseWriter, r *http.Request) {
 		channels = append(channels, c)
 	}
 	writeJSON(w, http.StatusOK, channels)
+}
+
+func GetPlaylistSource(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	playlistID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	p, ok := ownsPlaylist(userID, playlistID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "playlist not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, p)
+}
+
+func ReplacePlaylistChannels(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	playlistID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	p, ok := ownsPlaylist(userID, playlistID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "playlist not found")
+		return
+	}
+
+	var req struct {
+		Channels []models.Channel `json:"channels"`
+		EpgURL   *string          `json:"epg_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	if req.Channels == nil {
+		req.Channels = []models.Channel{}
+	}
+
+	if err := persistRefreshedChannels(playlistID, req.Channels); err != nil {
+		log.Printf("replace channels for playlist %d failed: %v", playlistID, err)
+		if isSQLiteBusy(err) {
+			writeError(w, http.StatusServiceUnavailable, "database busy, please retry")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	if req.EpgURL != nil {
+		trimmed := strings.TrimSpace(*req.EpgURL)
+		if trimmed == "" {
+			if _, err := database.DB.Exec(`UPDATE playlists SET epg_url = NULL WHERE id = ?`, playlistID); err != nil {
+				log.Printf("replace channels for playlist %d failed to clear epg_url: %v", playlistID, err)
+			}
+		} else {
+			if _, err := database.DB.Exec(`UPDATE playlists SET epg_url = ? WHERE id = ?`, trimmed, playlistID); err != nil {
+				log.Printf("replace channels for playlist %d failed to persist epg_url: %v", playlistID, err)
+			}
+		}
+	} else {
+		resolvedEPGURL := resolvePlaylistEPGURL(p.EpgURL, "")
+		if resolvedEPGURL != nil {
+			if _, err := database.DB.Exec(`UPDATE playlists SET epg_url = ? WHERE id = ?`, *resolvedEPGURL, playlistID); err != nil {
+				log.Printf("replace channels for playlist %d failed to persist epg_url: %v", playlistID, err)
+			}
+		}
+	}
+
+	if p.Type != "vuplus" {
+		if _, err := database.DB.Exec(`DELETE FROM epg_fetch_log WHERE playlist_id = ?`, playlistID); err != nil {
+			log.Printf("replace channels for playlist %d failed to invalidate epg_fetch_log: %v", playlistID, err)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(req.Channels)})
 }
 
 func RefreshPlaylist(w http.ResponseWriter, r *http.Request) {

@@ -125,9 +125,46 @@ class PlaylistStore extends ChangeNotifier {
   Future<void> removeEpgTimer(EpgEntry entry) async {
     final vuplusApi = _selectedVuplusApi();
     final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
-    final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
-    await vuplusApi.deleteTimer(beginUnix.toString(), entry.channelEpgId);
-    _timerKeys = Set.from(_timerKeys)..remove(key);
+
+    // Use exact values from timerlist; OpenWebif delete can require matching end.
+    final timersXml = await vuplusApi.fetchTimers();
+    final timers = _parseVuplusTimers(timersXml);
+    final normalizedEntryRef = _normalizeServiceRef(entry.channelEpgId);
+
+    VuplusTimer? match;
+    for (final t in timers) {
+      if (_normalizeServiceRef(t.channelEpgId) == normalizedEntryRef &&
+          t.beginUnix == beginUnix) {
+        match = t;
+        break;
+      }
+    }
+
+    match ??= timers.cast<VuplusTimer?>().firstWhere(
+      (t) =>
+          t != null &&
+          _normalizeServiceRef(t.channelEpgId) == normalizedEntryRef &&
+          (t.beginUnix - beginUnix).abs() <= 180,
+      orElse: () => null,
+    );
+
+    if (match != null) {
+      await vuplusApi.deleteTimer(
+        begin: match.beginUnix.toString(),
+        serviceRef: match.channelEpgId,
+        end: match.endUnix.toString(),
+      );
+    } else {
+      final endUnix = entry.endTime.toUtc().millisecondsSinceEpoch ~/ 1000;
+      await vuplusApi.deleteTimer(
+        begin: beginUnix.toString(),
+        serviceRef: entry.channelEpgId,
+        end: endUnix.toString(),
+      );
+    }
+
+    final refreshedTimersXml = await vuplusApi.fetchTimers();
+    _timerKeys = _parseVuplusTimerKeys(refreshedTimersXml);
     notifyListeners();
   }
 
@@ -142,7 +179,65 @@ class PlaylistStore extends ChangeNotifier {
   final Map<int, Future<List<Channel>>> _playlistChannelsInFlight = {};
   final Map<int, String> _runtimeEpgUrlByPlaylist = {};
 
-  Future<String> _readTextFromUrlOrFile(String source) async {
+  bool _isMaskedXtreamPassword(String? value) => (value ?? '').trim() == '***';
+
+  String _sanitizeUrlForLog(String value) {
+    final parsed = Uri.tryParse(value);
+    if (parsed == null || !parsed.hasScheme) {
+      return value;
+    }
+    final qp = Map<String, String>.from(parsed.queryParameters);
+    if (qp.containsKey('password')) {
+      qp['password'] = '***';
+    }
+    return parsed.replace(queryParameters: qp).toString();
+  }
+
+  String _sanitizeUriForLog(Uri uri) => _sanitizeUrlForLog(uri.toString());
+
+  void _xtreamLog(String message) {
+    if (kDebugMode) {
+      debugPrint('[XTREAM] $message');
+    }
+  }
+
+  Future<http.Response> _httpGetWithRetry(
+    Uri uri, {
+    Map<String, String>? headers,
+    int maxAttempts = 3,
+    String? debugLabel,
+  }) async {
+    Object? lastError;
+    final label = debugLabel ?? _sanitizeUriForLog(uri);
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        _xtreamLog('GET attempt $attempt/$maxAttempts -> $label');
+        final response = await http.get(uri, headers: headers);
+        final code = response.statusCode;
+        _xtreamLog('GET status $code <- $label');
+        final retriable =
+            code == 429 || code == 502 || code == 503 || code == 504;
+        if (!retriable || attempt == maxAttempts) {
+          return response;
+        }
+      } catch (e) {
+        lastError = e;
+        _xtreamLog('GET exception on attempt $attempt for $label: $e');
+        if (attempt == maxAttempts) {
+          rethrow;
+        }
+      }
+
+      await Future<void>.delayed(Duration(milliseconds: 300 * attempt));
+    }
+
+    throw ApiException('HTTP request failed for $uri: $lastError');
+  }
+
+  Future<String> _readTextFromUrlOrFile(
+    String source, {
+    Map<String, String>? requestHeaders,
+  }) async {
     final trimmed = source.trim();
     if (trimmed.isEmpty) {
       throw const ApiException('Source URL is empty');
@@ -159,10 +254,14 @@ class PlaylistStore extends ChangeNotifier {
 
     final uri = Uri.parse(trimmed);
     if (uri.scheme == 'http' || uri.scheme == 'https') {
-      final response = await http.get(uri);
+      final response = await _httpGetWithRetry(
+        uri,
+        headers: requestHeaders,
+        debugLabel: _sanitizeUriForLog(uri),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ApiException(
-          'HTTP ${response.statusCode} while fetching $trimmed',
+          'HTTP ${response.statusCode} while fetching ${_sanitizeUrlForLog(trimmed)}',
         );
       }
       return response.body;
@@ -210,11 +309,17 @@ class PlaylistStore extends ChangeNotifier {
     return plain?.trim();
   }
 
-  Future<List<Channel>> _loadM3uChannels(Playlist playlist) async {
+  Future<List<Channel>> _loadM3uChannels(
+    Playlist playlist, {
+    Map<String, String>? requestHeaders,
+  }) async {
     final source = (playlist.m3uUrl ?? '').trim();
     if (source.isEmpty) return const [];
 
-    final raw = await _readTextFromUrlOrFile(source);
+    final raw = await _readTextFromUrlOrFile(
+      source,
+      requestHeaders: requestHeaders,
+    );
     final lines = const LineSplitter().convert(raw);
     final out = <Channel>[];
 
@@ -291,39 +396,73 @@ class PlaylistStore extends ChangeNotifier {
     );
     final user = (playlist.xtreamUsername ?? '').trim();
     final pass = (playlist.xtreamPassword ?? '').trim();
+    if (_isMaskedXtreamPassword(pass)) {
+      throw const ApiException(
+        'Xtream password is masked. Open Edit Playlist and enter the Xtream password again.',
+      );
+    }
     if (server.isEmpty || user.isEmpty || pass.isEmpty) return const [];
 
-    final categoriesUri = Uri.parse('$server/player_api.php').replace(
-      queryParameters: {
-        'username': user,
-        'password': pass,
-        'action': 'get_live_categories',
-      },
-    );
-    final streamsUri = Uri.parse('$server/player_api.php').replace(
-      queryParameters: {
-        'username': user,
-        'password': pass,
-        'action': 'get_live_streams',
-      },
+    final headers = <String, String>{
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      'Accept': 'application/json,text/plain,*/*',
+      'Connection': 'keep-alive',
+    };
+    _xtreamLog(
+      'Loading Xtream playlist ${playlist.id} from ${_sanitizeUrlForLog(server)}',
     );
 
-    final categoriesResponse = await http.get(categoriesUri);
-    final streamsResponse = await http.get(streamsUri);
-    if (categoriesResponse.statusCode < 200 ||
-        categoriesResponse.statusCode >= 300) {
-      throw ApiException(
-        'HTTP ${categoriesResponse.statusCode} while fetching Xtream categories',
-      );
-    }
-    if (streamsResponse.statusCode < 200 || streamsResponse.statusCode >= 300) {
-      throw ApiException(
-        'HTTP ${streamsResponse.statusCode} while fetching Xtream streams',
-      );
+    Future<List<dynamic>?> fetchXtreamAction(String action) async {
+      final endpointCandidates = <String>['player_api.php', 'panel_api.php'];
+      for (final endpoint in endpointCandidates) {
+        final uri = Uri.parse('$server/$endpoint').replace(
+          queryParameters: {
+            'username': user,
+            'password': pass,
+            'action': action,
+          },
+        );
+        try {
+          final response = await _httpGetWithRetry(
+            uri,
+            headers: headers,
+            debugLabel: '$action via $endpoint (${_sanitizeUriForLog(uri)})',
+          );
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            _xtreamLog(
+              'Action $action via $endpoint returned status ${response.statusCode}',
+            );
+            continue;
+          }
+          final decoded = jsonDecode(response.body);
+          if (decoded is List<dynamic>) {
+            _xtreamLog(
+              'Action $action via $endpoint succeeded with ${decoded.length} entries',
+            );
+            return decoded;
+          }
+          _xtreamLog(
+            'Action $action via $endpoint returned non-list payload (${decoded.runtimeType})',
+          );
+        } catch (_) {
+          _xtreamLog(
+            'Action $action via $endpoint failed, trying next endpoint',
+          );
+        }
+      }
+      return null;
     }
 
-    final categoriesJson = jsonDecode(categoriesResponse.body) as List<dynamic>;
-    final streamsJson = jsonDecode(streamsResponse.body) as List<dynamic>;
+    final categoriesJson = await fetchXtreamAction('get_live_categories');
+    final streamsJson = await fetchXtreamAction('get_live_streams');
+    if (categoriesJson == null || streamsJson == null) {
+      return _loadXtreamChannelsFromM3u(
+        playlist,
+        server: server,
+        username: user,
+        password: pass,
+      );
+    }
 
     final categoryNames = <String, String>{};
     for (final row in categoriesJson) {
@@ -368,12 +507,136 @@ class PlaylistStore extends ChangeNotifier {
     return out;
   }
 
+  Future<List<Channel>> _loadXtreamChannelsFromM3u(
+    Playlist playlist, {
+    required String server,
+    required String username,
+    required String password,
+  }) async {
+    final serverUri = Uri.tryParse(server);
+    if (serverUri == null || !serverUri.hasAuthority) {
+      throw const ApiException('Invalid Xtream server URL');
+    }
+
+    final baseCandidates = <Uri>{serverUri};
+    if (serverUri.scheme == 'http') {
+      baseCandidates.add(serverUri.replace(scheme: 'https'));
+    }
+
+    final m3uCandidates = <String>[];
+    final seen = <String>{};
+    for (final base in baseCandidates) {
+      for (final type in const ['m3u_plus', 'm3u']) {
+        for (final output in const ['ts', 'm3u8']) {
+          final url = base
+              .replace(
+                path: '${base.path.replaceAll(RegExp(r'/+$'), '')}/get.php',
+                queryParameters: {
+                  'username': username,
+                  'password': password,
+                  'type': type,
+                  'output': output,
+                },
+              )
+              .toString();
+          if (seen.add(url)) {
+            m3uCandidates.add(url);
+          }
+        }
+      }
+
+      final noOutput = base
+          .replace(
+            path: '${base.path.replaceAll(RegExp(r'/+$'), '')}/get.php',
+            queryParameters: {
+              'username': username,
+              'password': password,
+              'type': 'm3u_plus',
+            },
+          )
+          .toString();
+      if (seen.add(noOutput)) {
+        m3uCandidates.add(noOutput);
+      }
+    }
+
+    Object? lastError;
+    for (var i = 0; i < m3uCandidates.length; i++) {
+      final m3uUrl = m3uCandidates[i];
+      _xtreamLog(
+        'Trying Xtream M3U fallback ${i + 1}/${m3uCandidates.length}: ${_sanitizeUrlForLog(m3uUrl)}',
+      );
+      final fallbackPlaylist = Playlist(
+        id: playlist.id,
+        name: playlist.name,
+        type: 'm3u',
+        m3uUrl: m3uUrl,
+        epgUrl: playlist.epgUrl,
+        xtreamServer: playlist.xtreamServer,
+        xtreamUsername: playlist.xtreamUsername,
+        xtreamPassword: playlist.xtreamPassword,
+        vuplusIp: playlist.vuplusIp,
+        vuplusPort: playlist.vuplusPort,
+        lastRefreshed: playlist.lastRefreshed,
+      );
+
+      try {
+        final loaded = await _loadM3uChannels(
+          fallbackPlaylist,
+          requestHeaders: {
+            'User-Agent':
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36',
+            'Accept':
+                'application/x-mpegURL,application/vnd.apple.mpegurl,application/octet-stream,text/plain,*/*',
+            'Connection': 'keep-alive',
+          },
+        );
+        if (loaded.isNotEmpty) {
+          _xtreamLog(
+            'Xtream M3U fallback succeeded with ${loaded.length} channels',
+          );
+          if ((playlist.epgUrl ?? '').trim().isEmpty) {
+            _runtimeEpgUrlByPlaylist[playlist.id] =
+                '$server/xmltv.php?username=$username&password=$password';
+          }
+          return loaded;
+        }
+        _xtreamLog('Xtream M3U fallback returned empty channel list');
+      } catch (e) {
+        lastError = e;
+        _xtreamLog('Xtream M3U fallback failed: $e');
+      }
+    }
+
+    if (lastError != null) {
+      throw ApiException(
+        'Xtream M3U fallback failed after ${m3uCandidates.length} attempts: $lastError',
+      );
+    }
+
+    throw const ApiException(
+      'Xtream source blocked player_api and M3U fallback returned no channels',
+    );
+  }
+
   List<Map<String, String>> _parseE2Services(String xmlRaw) {
     final doc = XmlDocument.parse(xmlRaw);
     return doc.findAllElements('e2service').map((node) {
       return {
         'ref': node.getElement('e2servicereference')?.innerText.trim() ?? '',
         'name': node.getElement('e2servicename')?.innerText.trim() ?? '',
+      };
+    }).toList();
+  }
+
+  List<Map<String, String>> _parseE2Movies(String xmlRaw) {
+    final doc = XmlDocument.parse(xmlRaw);
+    return doc.findAllElements('e2movie').map((node) {
+      return {
+        'ref': node.getElement('e2servicereference')?.innerText.trim() ?? '',
+        'title': node.getElement('e2title')?.innerText.trim() ?? '',
+        'name': node.getElement('e2servicename')?.innerText.trim() ?? '',
+        'file': node.getElement('e2filename')?.innerText.trim() ?? '',
       };
     }).toList();
   }
@@ -442,6 +705,54 @@ class PlaylistStore extends ChangeNotifier {
       }
     }
 
+    // Append VU+ recordings as a dedicated pseudo-group.
+    try {
+      final movieRootRef = '2:0:1:0:0:0:0:0:0:0:/hdd/movie/';
+      final moviesXml = await vuplusApi.fetchMovieList(
+        serviceRef: movieRootRef,
+      );
+      final movies = _parseE2Movies(moviesXml);
+
+      for (final movie in movies) {
+        final movieRef = movie['ref'] ?? '';
+        final movieTitle = (movie['title'] ?? '').isNotEmpty
+            ? movie['title']!
+            : ((movie['name'] ?? '').isNotEmpty
+                  ? movie['name']!
+                  : 'Recording ${idx + 1}');
+        final movieFile = movie['file'] ?? '';
+        if (movieRef.isEmpty && movieFile.isEmpty) {
+          continue;
+        }
+
+        final streamUrl = movieFile.isNotEmpty
+            ? '${vuplusApi.host}/file?file=${Uri.encodeQueryComponent(movieFile)}'
+            : '$streamBase/${Uri.encodeComponent(movieRef)}';
+
+        out.add(
+          Channel(
+            id: _channelIdFor(
+              playlist.id,
+              movieRef.isNotEmpty ? movieRef : movieFile,
+              idx,
+            ),
+            playlistId: playlist.id,
+            streamId: movieRef.isNotEmpty ? movieRef : movieFile,
+            name: movieTitle,
+            groupName: 'Aufnahmen',
+            streamUrl: streamUrl,
+            logoUrl: '',
+            epgChannelId: movieRef,
+            sortOrder: idx,
+            isFavorite: false,
+          ),
+        );
+        idx++;
+      }
+    } catch (_) {
+      // Optional group: ignore if movielist endpoint is unavailable.
+    }
+
     return out;
   }
 
@@ -458,6 +769,50 @@ class PlaylistStore extends ChangeNotifier {
     }
   }
 
+  Future<Playlist> _loadPlaylistSourceForRefresh(int playlistId) async {
+    final raw = await api.get('/playlists/$playlistId/source');
+    return Playlist.fromJson(raw as Map<String, dynamic>);
+  }
+
+  Future<List<Channel>> _loadChannelsFromBackend(int playlistId) async {
+    final raw =
+        await api.get('/playlists/$playlistId/channels') as List<dynamic>;
+    return raw.map((e) => Channel.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> _persistChannelsToBackend({
+    required int playlistId,
+    required Playlist sourcePlaylist,
+    required List<Channel> channels,
+  }) async {
+    final configuredEpg = (sourcePlaylist.epgUrl ?? '').trim();
+    final discoveredEpg = (_runtimeEpgUrlByPlaylist[playlistId] ?? '').trim();
+    final epgToPersist = configuredEpg.isNotEmpty
+        ? configuredEpg
+        : discoveredEpg;
+
+    final body = <String, dynamic>{
+      'channels': channels
+          .asMap()
+          .entries
+          .map(
+            (entry) => {
+              'stream_id': entry.value.streamId,
+              'name': entry.value.name,
+              'group_name': entry.value.groupName,
+              'stream_url': entry.value.streamUrl,
+              'logo_url': entry.value.logoUrl,
+              'epg_channel_id': entry.value.epgChannelId,
+              'sort_order': entry.key,
+            },
+          )
+          .toList(),
+      if (epgToPersist.isNotEmpty) 'epg_url': epgToPersist,
+    };
+
+    await api.put('/playlists/$playlistId/channels', body);
+  }
+
   Future<List<Channel>> _getOrLoadPlaylistChannels(
     int playlistId, {
     bool force = false,
@@ -471,8 +826,19 @@ class PlaylistStore extends ChangeNotifier {
     if (existing != null) return existing;
 
     final future = () async {
-      final playlist = _playlistById(playlistId);
-      final loaded = await _loadChannelsForPlaylist(playlist);
+      List<Channel> loaded;
+      if (force) {
+        final sourcePlaylist = await _loadPlaylistSourceForRefresh(playlistId);
+        loaded = await _loadChannelsForPlaylist(sourcePlaylist);
+        await _persistChannelsToBackend(
+          playlistId: playlistId,
+          sourcePlaylist: sourcePlaylist,
+          channels: loaded,
+        );
+      } else {
+        loaded = await _loadChannelsFromBackend(playlistId);
+      }
+
       final sorted = sortChannels(
         _applyFavoriteFlagsToChannels(loaded),
         channelSortOrder,
@@ -623,6 +989,32 @@ class PlaylistStore extends ChangeNotifier {
       final begin = int.tryParse(beginRaw) ?? 0;
       if (ref.isEmpty || begin <= 0) continue;
       out.add(_timerKeyFromServiceRefAndBegin(ref, begin));
+    }
+
+    return out;
+  }
+
+  List<VuplusTimer> _parseVuplusTimers(String xmlRaw) {
+    final doc = XmlDocument.parse(xmlRaw);
+    final out = <VuplusTimer>[];
+
+    for (final timer in doc.findAllElements('e2timer')) {
+      final ref =
+          timer.getElement('e2servicereference')?.innerText.trim() ?? '';
+      final beginRaw = timer.getElement('e2timebegin')?.innerText.trim() ?? '';
+      final endRaw = timer.getElement('e2timeend')?.innerText.trim() ?? '';
+      final begin = int.tryParse(beginRaw) ?? 0;
+      final end = int.tryParse(endRaw) ?? 0;
+      if (ref.isEmpty || begin <= 0 || end <= 0) continue;
+
+      out.add(
+        VuplusTimer(
+          channelEpgId: ref,
+          beginUnix: begin,
+          endUnix: end,
+          name: timer.getElement('e2name')?.innerText.trim() ?? '',
+        ),
+      );
     }
 
     return out;
@@ -821,7 +1213,13 @@ class PlaylistStore extends ChangeNotifier {
       final allChannels = <Channel>[];
 
       for (final p in playlists) {
-        final playlistChannels = await _getOrLoadPlaylistChannels(p.id);
+        List<Channel> playlistChannels;
+        try {
+          playlistChannels = await _getOrLoadPlaylistChannels(p.id);
+        } catch (e) {
+          debugPrint('Skipping playlist ${p.id} in global search: $e');
+          continue;
+        }
         allChannels.addAll(playlistChannels);
 
         final counts = <String, int>{};
@@ -944,6 +1342,9 @@ class PlaylistStore extends ChangeNotifier {
           ),
         ),
       );
+    } catch (e) {
+      groups = const [];
+      debugPrint('Failed to fetch groups for playlist $playlistId: $e');
     } finally {
       loadingGroups = false;
       notifyListeners();
@@ -967,6 +1368,9 @@ class PlaylistStore extends ChangeNotifier {
           ? playlistChannels
           : playlistChannels.where((c) => c.groupName == selected).toList();
       channels = sortChannels(filtered, channelSortOrder);
+    } catch (e) {
+      channels = const [];
+      debugPrint('Failed to fetch channels for playlist $playlistId: $e');
     } finally {
       loadingChannels = false;
       notifyListeners();
@@ -990,6 +1394,23 @@ class PlaylistStore extends ChangeNotifier {
     }
 
     final playlist = _playlistById(channel.playlistId);
+    final isVuplusRecording =
+        playlist.type == 'vuplus' &&
+        channel.groupName.trim().toLowerCase() == 'aufnahmen';
+
+    if (isVuplusRecording) {
+      loadingEpg = true;
+      notifyListeners();
+      try {
+        epgEntries = const [];
+        _timerKeys = {};
+        epgSourceMissing = true;
+      } finally {
+        loadingEpg = false;
+        notifyListeners();
+      }
+      return;
+    }
 
     loadingEpg = true;
     notifyListeners();
@@ -1437,6 +1858,7 @@ class PlaylistStore extends ChangeNotifier {
     final id = (result['id'] as num).toInt();
     _playlistChannelsCache.remove(id);
     await fetchPlaylists();
+    await refreshPlaylist(id);
     await selectPlaylist(id);
   }
 
@@ -1523,6 +1945,7 @@ class PlaylistStore extends ChangeNotifier {
     final id = (result['id'] as num).toInt();
     _playlistChannelsCache.remove(id);
     await fetchPlaylists();
+    await refreshPlaylist(id);
     await selectPlaylist(id);
   }
 
@@ -1546,6 +1969,7 @@ class PlaylistStore extends ChangeNotifier {
     final id = (result['id'] as num).toInt();
     _playlistChannelsCache.remove(id);
     await fetchPlaylists();
+    await refreshPlaylist(id);
     await selectPlaylist(id);
   }
 }
