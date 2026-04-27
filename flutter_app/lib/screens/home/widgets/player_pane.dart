@@ -180,10 +180,11 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
         SnackBar(content: Text('Could not remove timer: $e')),
       );
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _removingTimer = false;
-      });
+      if (mounted) {
+        setState(() {
+          _removingTimer = false;
+        });
+      }
     }
   }
 
@@ -278,10 +279,11 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                                       ),
                                     );
                                   } finally {
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _savingRecording = false;
-                                    });
+                                    if (mounted) {
+                                      setState(() {
+                                        _savingRecording = false;
+                                      });
+                                    }
                                   }
                                 },
                           color: widget.hasEnded

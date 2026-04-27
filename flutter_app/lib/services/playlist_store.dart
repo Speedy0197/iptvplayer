@@ -1,4 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'vuplus_api.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:xml/xml.dart';
 
 import '../models/models.dart';
 import 'api_client.dart';
@@ -9,37 +15,618 @@ export 'channel_sort.dart' show ChannelSortOrder;
 export 'playlist_search.dart' show SearchResultItem, SearchResultType;
 
 class PlaylistStore extends ChangeNotifier {
-  Future<void> recordEpgEntry(EpgEntry entry) async {
+  PlaylistStore({required this.api});
+
+  VuplusApi _selectedVuplusApi() {
     final playlist = selectedPlaylist;
     if (playlist == null) {
       throw const ApiException('No selected playlist');
     }
     if (playlist.type != 'vuplus') {
-      throw const ApiException('Recording is only supported for VU+ playlists');
+      throw const ApiException('Selected playlist is not a VU+ playlist');
     }
+    final ip = (playlist.vuplusIp ?? '').trim();
+    if (ip.isEmpty) {
+      throw const ApiException('VU+ IP is missing on selected playlist');
+    }
+    final port = (playlist.vuplusPort ?? '').trim().isEmpty
+        ? '80'
+        : playlist.vuplusPort!.trim();
+    final host = ip.startsWith('http://') || ip.startsWith('https://')
+        ? '$ip:$port'
+        : 'http://$ip:$port';
+    return VuplusApi(host: host);
+  }
 
+  // Fetch channels directly from VU+
+  Future<void> fetchChannelsFromVuplus({String? bouquet}) async {
+    loadingChannels = true;
+    notifyListeners();
+    try {
+      final vuplusApi = _selectedVuplusApi();
+      final xml = await vuplusApi.fetchChannels(serviceRef: bouquet);
+      final services = _parseE2Services(xml);
+      final parsed = <Channel>[];
+      var index = 0;
+      for (final s in services) {
+        final ref = s['ref'] ?? '';
+        if (!ref.startsWith('1:0:')) {
+          continue;
+        }
+        parsed.add(
+          Channel(
+            id: _channelIdFor(selectedPlaylistId ?? 0, ref, index),
+            playlistId: selectedPlaylistId ?? 0,
+            streamId: ref,
+            name: (s['name'] ?? '').isEmpty ? 'Unknown channel' : s['name']!,
+            groupName: selectedGroup ?? 'Uncategorized',
+            streamUrl: '',
+            logoUrl: vuplusApi.piconUrl(ref),
+            epgChannelId: ref,
+            sortOrder: index,
+            isFavorite: false,
+          ),
+        );
+        index++;
+      }
+      channels = sortChannels(parsed, channelSortOrder);
+    } finally {
+      loadingChannels = false;
+      notifyListeners();
+    }
+  }
+
+  // Fetch EPG directly from VU+
+  Future<void> fetchEpgFromVuplus(String serviceRef) async {
+    loadingEpg = true;
+    notifyListeners();
+    try {
+      final vuplusApi = _selectedVuplusApi();
+      final xml = await vuplusApi.fetchEpg(serviceRef);
+      epgEntries = _parseVuplusEpg(xml, serviceRef);
+    } finally {
+      loadingEpg = false;
+      notifyListeners();
+    }
+  }
+
+  // Fetch timers directly from VU+
+  Future<void> fetchTimersFromVuplus() async {
+    final vuplusApi = _selectedVuplusApi();
+    final xml = await vuplusApi.fetchTimers();
+    _timerKeys = _parseVuplusTimerKeys(xml);
+    notifyListeners();
+  }
+
+  // Add timer directly to VU+
+  Future<void> recordEpgEntry(EpgEntry entry) async {
+    final vuplusApi = _selectedVuplusApi();
     final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
     final endUnix = entry.endTime.toUtc().millisecondsSinceEpoch ~/ 1000;
     final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
 
-    await api.post(
-      '/playlists/${playlist.id}/timers',
-      {
-        'channel_epg_id': entry.channelEpgId,
-        'start_time': entry.startTime.toIso8601String(),
-        'end_time': entry.endTime.toIso8601String(),
-        'title': entry.title,
-        'description': entry.description,
-      },
-    );
+    await vuplusApi.addTimer({
+      'sRef': entry.channelEpgId,
+      'begin': beginUnix.toString(),
+      'end': endUnix.toString(),
+      'name': entry.title,
+      'description': entry.description,
+      'disabled': '0',
+      'justplay': '0',
+      'afterevent': '3',
+      // Add other timer params as needed
+    });
 
-    // Optimistically add the timer key so the UI updates immediately.
     _timerKeys = Set.from(_timerKeys)..add(key);
     notifyListeners();
   }
-  final ApiClient api;
 
-  PlaylistStore({required this.api});
+  // Remove timer directly from VU+
+  Future<void> removeEpgTimer(EpgEntry entry) async {
+    final vuplusApi = _selectedVuplusApi();
+    final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
+    final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
+    await vuplusApi.deleteTimer(beginUnix.toString(), entry.channelEpgId);
+    _timerKeys = Set.from(_timerKeys)..remove(key);
+    notifyListeners();
+  }
+
+  // Get picon URL for a service
+  String getPiconUrl(String serviceRef) {
+    final vuplusApi = _selectedVuplusApi();
+    return vuplusApi.piconUrl(serviceRef);
+  }
+
+  final ApiClient api;
+  final Map<int, List<Channel>> _playlistChannelsCache = {};
+  final Map<int, Future<List<Channel>>> _playlistChannelsInFlight = {};
+  final Map<int, String> _runtimeEpgUrlByPlaylist = {};
+
+  Future<String> _readTextFromUrlOrFile(String source) async {
+    final trimmed = source.trim();
+    if (trimmed.isEmpty) {
+      throw const ApiException('Source URL is empty');
+    }
+
+    if (trimmed.startsWith('file://')) {
+      final uri = Uri.parse(trimmed);
+      return File.fromUri(uri).readAsString();
+    }
+
+    if (trimmed.startsWith('/')) {
+      return File(trimmed).readAsString();
+    }
+
+    final uri = Uri.parse(trimmed);
+    if (uri.scheme == 'http' || uri.scheme == 'https') {
+      final response = await http.get(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException(
+          'HTTP ${response.statusCode} while fetching $trimmed',
+        );
+      }
+      return response.body;
+    }
+
+    throw ApiException('Unsupported source URI: $trimmed');
+  }
+
+  String _resolveUrl(String base, String value) {
+    final v = value.trim();
+    if (v.isEmpty) return v;
+    final parsed = Uri.tryParse(v);
+    if (parsed != null && parsed.hasScheme) {
+      return v;
+    }
+    final baseUri = Uri.tryParse(base.trim());
+    if (baseUri == null) return v;
+    return baseUri.resolve(v).toString();
+  }
+
+  int _channelIdFor(int playlistId, String streamId, int index) {
+    final seed = streamId.isEmpty ? 'idx:$index' : streamId;
+    final hash = seed.hashCode & 0x7fffffff;
+    return (playlistId * 1000003) ^ hash;
+  }
+
+  Playlist _playlistById(int playlistId) {
+    for (final p in playlists) {
+      if (p.id == playlistId) return p;
+    }
+    throw ApiException('Playlist $playlistId not found');
+  }
+
+  String? _extractAttr(String line, String attr) {
+    final quoted = RegExp(
+      '$attr="([^"]*)"',
+      caseSensitive: false,
+    ).firstMatch(line)?.group(1);
+    if (quoted != null && quoted.isNotEmpty) return quoted.trim();
+
+    final plain = RegExp(
+      '$attr=([^\\s]+)',
+      caseSensitive: false,
+    ).firstMatch(line)?.group(1);
+    return plain?.trim();
+  }
+
+  Future<List<Channel>> _loadM3uChannels(Playlist playlist) async {
+    final source = (playlist.m3uUrl ?? '').trim();
+    if (source.isEmpty) return const [];
+
+    final raw = await _readTextFromUrlOrFile(source);
+    final lines = const LineSplitter().convert(raw);
+    final out = <Channel>[];
+
+    String pendingName = '';
+    String pendingGroup = 'Uncategorized';
+    String pendingLogo = '';
+    String pendingEpgId = '';
+
+    var idx = 0;
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+
+      if (line.startsWith('#EXTM3U')) {
+        final discovered =
+            _extractAttr(line, 'url-tvg') ??
+            _extractAttr(line, 'x-tvg-url') ??
+            _extractAttr(line, 'tvg-url');
+        if (discovered != null && discovered.isNotEmpty) {
+          _runtimeEpgUrlByPlaylist[playlist.id] = discovered;
+        }
+        continue;
+      }
+
+      if (line.startsWith('#EXTINF:')) {
+        pendingName = _extractAttr(line, 'tvg-name') ?? '';
+        if (pendingName.isEmpty) {
+          final comma = line.lastIndexOf(',');
+          if (comma >= 0 && comma < line.length - 1) {
+            pendingName = line.substring(comma + 1).trim();
+          }
+        }
+        pendingGroup = _extractAttr(line, 'group-title') ?? 'Uncategorized';
+        pendingLogo = _extractAttr(line, 'tvg-logo') ?? '';
+        pendingEpgId = _extractAttr(line, 'tvg-id') ?? '';
+        continue;
+      }
+
+      if (line.startsWith('#')) continue;
+
+      final streamUrl = _resolveUrl(source, line);
+      final name = pendingName.isEmpty ? 'Channel ${idx + 1}' : pendingName;
+      final streamId = line;
+
+      out.add(
+        Channel(
+          id: _channelIdFor(playlist.id, streamId, idx),
+          playlistId: playlist.id,
+          streamId: streamId,
+          name: name,
+          groupName: pendingGroup.isEmpty ? 'Uncategorized' : pendingGroup,
+          streamUrl: streamUrl,
+          logoUrl: pendingLogo,
+          epgChannelId: pendingEpgId,
+          sortOrder: idx,
+          isFavorite: false,
+        ),
+      );
+      idx++;
+
+      pendingName = '';
+      pendingGroup = 'Uncategorized';
+      pendingLogo = '';
+      pendingEpgId = '';
+    }
+
+    return out;
+  }
+
+  Future<List<Channel>> _loadXtreamChannels(Playlist playlist) async {
+    final server = (playlist.xtreamServer ?? '').trim().replaceAll(
+      RegExp(r'/+$'),
+      '',
+    );
+    final user = (playlist.xtreamUsername ?? '').trim();
+    final pass = (playlist.xtreamPassword ?? '').trim();
+    if (server.isEmpty || user.isEmpty || pass.isEmpty) return const [];
+
+    final categoriesUri = Uri.parse('$server/player_api.php').replace(
+      queryParameters: {
+        'username': user,
+        'password': pass,
+        'action': 'get_live_categories',
+      },
+    );
+    final streamsUri = Uri.parse('$server/player_api.php').replace(
+      queryParameters: {
+        'username': user,
+        'password': pass,
+        'action': 'get_live_streams',
+      },
+    );
+
+    final categoriesResponse = await http.get(categoriesUri);
+    final streamsResponse = await http.get(streamsUri);
+    if (categoriesResponse.statusCode < 200 ||
+        categoriesResponse.statusCode >= 300) {
+      throw ApiException(
+        'HTTP ${categoriesResponse.statusCode} while fetching Xtream categories',
+      );
+    }
+    if (streamsResponse.statusCode < 200 || streamsResponse.statusCode >= 300) {
+      throw ApiException(
+        'HTTP ${streamsResponse.statusCode} while fetching Xtream streams',
+      );
+    }
+
+    final categoriesJson = jsonDecode(categoriesResponse.body) as List<dynamic>;
+    final streamsJson = jsonDecode(streamsResponse.body) as List<dynamic>;
+
+    final categoryNames = <String, String>{};
+    for (final row in categoriesJson) {
+      final m = row as Map<String, dynamic>;
+      final id = (m['category_id'] ?? '').toString();
+      final name = (m['category_name'] ?? '').toString();
+      if (id.isNotEmpty) categoryNames[id] = name;
+    }
+
+    final out = <Channel>[];
+    for (var i = 0; i < streamsJson.length; i++) {
+      final m = streamsJson[i] as Map<String, dynamic>;
+      final streamId = (m['stream_id'] ?? '').toString();
+      if (streamId.isEmpty) continue;
+
+      final categoryId = (m['category_id'] ?? '').toString();
+      final groupName = categoryNames[categoryId] ?? 'Uncategorized';
+      final fallbackUrl = '$server/live/$user/$pass/$streamId.ts';
+      final directSource = (m['direct_source'] ?? '').toString().trim();
+
+      out.add(
+        Channel(
+          id: _channelIdFor(playlist.id, streamId, i),
+          playlistId: playlist.id,
+          streamId: streamId,
+          name: (m['name'] ?? 'Unknown channel').toString(),
+          groupName: groupName,
+          streamUrl: directSource.isNotEmpty ? directSource : fallbackUrl,
+          logoUrl: (m['stream_icon'] ?? '').toString(),
+          epgChannelId: (m['epg_channel_id'] ?? '').toString(),
+          sortOrder: i,
+          isFavorite: false,
+        ),
+      );
+    }
+
+    if ((playlist.epgUrl ?? '').trim().isEmpty) {
+      _runtimeEpgUrlByPlaylist[playlist.id] =
+          '$server/xmltv.php?username=$user&password=$pass';
+    }
+
+    return out;
+  }
+
+  List<Map<String, String>> _parseE2Services(String xmlRaw) {
+    final doc = XmlDocument.parse(xmlRaw);
+    return doc.findAllElements('e2service').map((node) {
+      return {
+        'ref': node.getElement('e2servicereference')?.innerText.trim() ?? '',
+        'name': node.getElement('e2servicename')?.innerText.trim() ?? '',
+      };
+    }).toList();
+  }
+
+  VuplusApi _vuplusApiForPlaylist(Playlist playlist) {
+    if (playlist.type != 'vuplus') {
+      throw const ApiException('Selected playlist is not a VU+ playlist');
+    }
+    final ip = (playlist.vuplusIp ?? '').trim();
+    if (ip.isEmpty) {
+      throw const ApiException('VU+ IP is missing on selected playlist');
+    }
+    final port = (playlist.vuplusPort ?? '').trim().isEmpty
+        ? '80'
+        : playlist.vuplusPort!.trim();
+    final host = ip.startsWith('http://') || ip.startsWith('https://')
+        ? '$ip:$port'
+        : 'http://$ip:$port';
+    return VuplusApi(host: host);
+  }
+
+  Future<List<Channel>> _loadVuplusChannels(Playlist playlist) async {
+    final vuplusApi = _vuplusApiForPlaylist(playlist);
+    final baseUri = Uri.parse(vuplusApi.host);
+    final streamBase = '${baseUri.scheme}://${baseUri.host}:8001';
+
+    final rootXml = await vuplusApi.fetchChannels();
+    final bouquets = _parseE2Services(
+      rootXml,
+    ).where((b) => (b['ref'] ?? '').startsWith('1:7:')).toList();
+
+    final out = <Channel>[];
+    var idx = 0;
+    for (final bouquet in bouquets) {
+      final bouquetRef = bouquet['ref'] ?? '';
+      final bouquetName = (bouquet['name'] ?? '').isEmpty
+          ? 'Uncategorized'
+          : bouquet['name']!;
+      if (bouquetRef.isEmpty) continue;
+
+      final channelsXml = await vuplusApi.fetchChannels(serviceRef: bouquetRef);
+      final services = _parseE2Services(
+        channelsXml,
+      ).where((s) => (s['ref'] ?? '').startsWith('1:0:')).toList();
+
+      for (final service in services) {
+        final svcRef = service['ref'] ?? '';
+        final svcName = service['name'] ?? '';
+        if (svcRef.isEmpty || svcName.isEmpty) continue;
+
+        out.add(
+          Channel(
+            id: _channelIdFor(playlist.id, svcRef, idx),
+            playlistId: playlist.id,
+            streamId: svcRef,
+            name: svcName,
+            groupName: bouquetName,
+            streamUrl: '$streamBase/${Uri.encodeComponent(svcRef)}',
+            logoUrl: vuplusApi.piconUrl(svcRef),
+            epgChannelId: svcRef,
+            sortOrder: idx,
+            isFavorite: false,
+          ),
+        );
+        idx++;
+      }
+    }
+
+    return out;
+  }
+
+  Future<List<Channel>> _loadChannelsForPlaylist(Playlist playlist) async {
+    switch (playlist.type) {
+      case 'm3u':
+        return _loadM3uChannels(playlist);
+      case 'xtream':
+        return _loadXtreamChannels(playlist);
+      case 'vuplus':
+        return _loadVuplusChannels(playlist);
+      default:
+        return const [];
+    }
+  }
+
+  Future<List<Channel>> _getOrLoadPlaylistChannels(
+    int playlistId, {
+    bool force = false,
+  }) async {
+    if (!force) {
+      final cached = _playlistChannelsCache[playlistId];
+      if (cached != null) return cached;
+    }
+
+    final existing = _playlistChannelsInFlight[playlistId];
+    if (existing != null) return existing;
+
+    final future = () async {
+      final playlist = _playlistById(playlistId);
+      final loaded = await _loadChannelsForPlaylist(playlist);
+      final sorted = sortChannels(
+        _applyFavoriteFlagsToChannels(loaded),
+        channelSortOrder,
+      );
+      _playlistChannelsCache[playlistId] = sorted;
+      return sorted;
+    }();
+
+    _playlistChannelsInFlight[playlistId] = future;
+    try {
+      return await future;
+    } finally {
+      _playlistChannelsInFlight.remove(playlistId);
+    }
+  }
+
+  DateTime? _parseXmltvDate(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+    final m = RegExp(r'^(\\d{14})(?:\\s+([+-]\\d{4}))?').firstMatch(raw);
+    if (m == null) return null;
+
+    final digits = m.group(1)!;
+    final year = int.parse(digits.substring(0, 4));
+    final month = int.parse(digits.substring(4, 6));
+    final day = int.parse(digits.substring(6, 8));
+    final hour = int.parse(digits.substring(8, 10));
+    final minute = int.parse(digits.substring(10, 12));
+    final second = int.parse(digits.substring(12, 14));
+
+    final utc = DateTime.utc(year, month, day, hour, minute, second);
+    final offset = m.group(2);
+    if (offset == null) {
+      return utc.toLocal();
+    }
+
+    final sign = offset.startsWith('-') ? -1 : 1;
+    final offHours = int.parse(offset.substring(1, 3));
+    final offMinutes = int.parse(offset.substring(3, 5));
+    final totalMinutes = sign * (offHours * 60 + offMinutes);
+    return utc.subtract(Duration(minutes: totalMinutes)).toLocal();
+  }
+
+  Future<List<EpgEntry>> _loadXmltvEpgForChannel(
+    Playlist playlist,
+    Channel channel,
+  ) async {
+    final configured = (playlist.epgUrl ?? '').trim();
+    final discovered = (_runtimeEpgUrlByPlaylist[playlist.id] ?? '').trim();
+    final epgUrl = configured.isNotEmpty ? configured : discovered;
+    if (epgUrl.isEmpty || channel.epgChannelId.trim().isEmpty) {
+      return const [];
+    }
+
+    final xmlRaw = await _readTextFromUrlOrFile(epgUrl);
+    final doc = XmlDocument.parse(xmlRaw);
+    final target = channel.epgChannelId.trim().toLowerCase();
+
+    final entries = <EpgEntry>[];
+    for (final programme in doc.findAllElements('programme')) {
+      final channelIdAttr = (programme.getAttribute('channel') ?? '')
+          .trim()
+          .toLowerCase();
+      if (channelIdAttr != target) continue;
+
+      final start = _parseXmltvDate(programme.getAttribute('start') ?? '');
+      final end = _parseXmltvDate(programme.getAttribute('stop') ?? '');
+      if (start == null || end == null || !end.isAfter(start)) continue;
+
+      final title = programme.findElements('title').isEmpty
+          ? ''
+          : programme.findElements('title').first.innerText.trim();
+      final desc = programme.findElements('desc').isEmpty
+          ? ''
+          : programme.findElements('desc').first.innerText.trim();
+
+      entries.add(
+        EpgEntry(
+          channelEpgId: channel.epgChannelId,
+          startTime: start,
+          endTime: end,
+          title: title,
+          description: desc,
+        ),
+      );
+    }
+
+    entries.sort((a, b) => a.startTime.compareTo(b.startTime));
+    return entries;
+  }
+
+  List<EpgEntry> _parseVuplusEpg(String xmlRaw, String fallbackServiceRef) {
+    final doc = XmlDocument.parse(xmlRaw);
+    final out = <EpgEntry>[];
+
+    for (final event in doc.findAllElements('e2event')) {
+      final beginRaw =
+          event.getElement('e2eventstart')?.innerText.trim() ??
+          event.getElement('e2eventstarttimestamp')?.innerText.trim() ??
+          '';
+      final durationRaw =
+          event.getElement('e2eventduration')?.innerText.trim() ?? '';
+      final beginUnix = int.tryParse(beginRaw) ?? 0;
+      final durationSec = int.tryParse(durationRaw) ?? 0;
+      if (beginUnix <= 0 || durationSec <= 0) continue;
+
+      final start = DateTime.fromMillisecondsSinceEpoch(
+        beginUnix * 1000,
+        isUtc: true,
+      ).toLocal();
+      final end = start.add(Duration(seconds: durationSec));
+
+      final title = event.getElement('e2eventtitle')?.innerText.trim() ?? '';
+      final shortDesc =
+          event.getElement('e2eventdescription')?.innerText.trim() ?? '';
+      final extDesc =
+          event.getElement('e2eventdescriptionextended')?.innerText.trim() ??
+          '';
+      final desc = [shortDesc, extDesc].where((s) => s.isNotEmpty).join('\n');
+
+      final serviceRef =
+          event.getElement('e2eventservicereference')?.innerText.trim() ??
+          fallbackServiceRef;
+
+      out.add(
+        EpgEntry(
+          channelEpgId: serviceRef,
+          startTime: start,
+          endTime: end,
+          title: title,
+          description: desc,
+        ),
+      );
+    }
+
+    out.sort((a, b) => a.startTime.compareTo(b.startTime));
+    return out;
+  }
+
+  Set<String> _parseVuplusTimerKeys(String xmlRaw) {
+    final doc = XmlDocument.parse(xmlRaw);
+    final out = <String>{};
+
+    for (final timer in doc.findAllElements('e2timer')) {
+      final ref =
+          timer.getElement('e2servicereference')?.innerText.trim() ?? '';
+      final beginRaw = timer.getElement('e2timebegin')?.innerText.trim() ?? '';
+      final begin = int.tryParse(beginRaw) ?? 0;
+      if (ref.isEmpty || begin <= 0) continue;
+      out.add(_timerKeyFromServiceRefAndBegin(ref, begin));
+    }
+
+    return out;
+  }
 
   List<Playlist> playlists = const [];
   List<Group> groups = const [];
@@ -50,6 +637,7 @@ class PlaylistStore extends ChangeNotifier {
   List<Group> favoriteGroups = const [];
   List<EpgEntry> epgEntries = const [];
   Set<String> _timerKeys = {};
+  Set<String> _favoriteSourceKeys = {};
 
   int? selectedPlaylistId;
   String? selectedGroup;
@@ -84,6 +672,52 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   bool get isSelectedPlaylistVuplus => selectedPlaylist?.type == 'vuplus';
+
+  String _favoriteSourceKey(int playlistId, String streamId) {
+    return '$playlistId:${streamId.trim().toLowerCase()}';
+  }
+
+  String _favoriteSourceKeyForChannel(Channel channel) {
+    return _favoriteSourceKey(channel.playlistId, channel.streamId);
+  }
+
+  bool _isChannelFavoriteByKey(Channel channel) {
+    return _favoriteSourceKeys.contains(_favoriteSourceKeyForChannel(channel));
+  }
+
+  List<Channel> _applyFavoriteFlagsToChannels(Iterable<Channel> values) {
+    return values
+        .map((c) => c.copyWith(isFavorite: _isChannelFavoriteByKey(c)))
+        .toList();
+  }
+
+  void _reconcileFavoriteChannelFlags() {
+    channels = sortChannels(
+      _applyFavoriteFlagsToChannels(channels),
+      channelSortOrder,
+    );
+    _globalChannels = sortChannels(
+      _applyFavoriteFlagsToChannels(_globalChannels),
+      channelSortOrder,
+    );
+
+    final updatedCache = <int, List<Channel>>{};
+    for (final entry in _playlistChannelsCache.entries) {
+      updatedCache[entry.key] = sortChannels(
+        _applyFavoriteFlagsToChannels(entry.value),
+        channelSortOrder,
+      );
+    }
+    _playlistChannelsCache
+      ..clear()
+      ..addAll(updatedCache);
+
+    if (nowPlaying != null) {
+      nowPlaying = nowPlaying!.copyWith(
+        isFavorite: _isChannelFavoriteByKey(nowPlaying!),
+      );
+    }
+  }
 
   String _safeDecodeComponent(String value) {
     try {
@@ -187,16 +821,25 @@ class PlaylistStore extends ChangeNotifier {
       final allChannels = <Channel>[];
 
       for (final p in playlists) {
-        final rawGroups =
-            await api.get('/playlists/${p.id}/groups') as List<dynamic>;
-        allGroups.addAll(
-          rawGroups.map((e) => Group.fromJson(e as Map<String, dynamic>)),
-        );
+        final playlistChannels = await _getOrLoadPlaylistChannels(p.id);
+        allChannels.addAll(playlistChannels);
 
-        final rawChannels =
-            await api.get('/playlists/${p.id}/channels') as List<dynamic>;
-        allChannels.addAll(
-          rawChannels.map((e) => Channel.fromJson(e as Map<String, dynamic>)),
+        final counts = <String, int>{};
+        for (final c in playlistChannels) {
+          final key = c.groupName.trim().isEmpty
+              ? 'Uncategorized'
+              : c.groupName;
+          counts[key] = (counts[key] ?? 0) + 1;
+        }
+        allGroups.addAll(
+          counts.entries.map(
+            (e) => Group(
+              name: e.key,
+              playlistId: p.id,
+              channelCount: e.value,
+              isFavorite: false,
+            ),
+          ),
         );
       }
 
@@ -280,10 +923,24 @@ class PlaylistStore extends ChangeNotifier {
     loadingGroups = true;
     notifyListeners();
     try {
+      final playlistChannels = await _getOrLoadPlaylistChannels(playlistId);
+      final counts = <String, int>{};
+      for (final channel in playlistChannels) {
+        final groupName = channel.groupName.trim().isEmpty
+            ? 'Uncategorized'
+            : channel.groupName;
+        counts[groupName] = (counts[groupName] ?? 0) + 1;
+      }
+
       groups = sortGroups(
         _mergeFavoriteFlagsIntoGroups(
-          (await api.get('/playlists/$playlistId/groups') as List<dynamic>).map(
-            (e) => Group.fromJson(e as Map<String, dynamic>),
+          counts.entries.map(
+            (e) => Group(
+              name: e.key,
+              playlistId: playlistId,
+              channelCount: e.value,
+              isFavorite: false,
+            ),
           ),
         ),
       );
@@ -304,19 +961,12 @@ class PlaylistStore extends ChangeNotifier {
     loadingChannels = true;
     notifyListeners();
     try {
-      final params = <String, String>{};
-      if (group != null && group.isNotEmpty) {
-        params['group'] = group;
-      }
-      final query = params.isEmpty
-          ? ''
-          : '?${Uri(queryParameters: params).query}';
-      channels = sortChannels(
-        (await api.get('/playlists/$playlistId/channels$query')
-                as List<dynamic>)
-            .map((e) => Channel.fromJson(e as Map<String, dynamic>)),
-        channelSortOrder,
-      );
+      final playlistChannels = await _getOrLoadPlaylistChannels(playlistId);
+      final selected = (group ?? '').trim();
+      final filtered = selected.isEmpty
+          ? playlistChannels
+          : playlistChannels.where((c) => c.groupName == selected).toList();
+      channels = sortChannels(filtered, channelSortOrder);
     } finally {
       loadingChannels = false;
       notifyListeners();
@@ -339,79 +989,32 @@ class PlaylistStore extends ChangeNotifier {
       return;
     }
 
-    final epgPlaylistId = channel.playlistId;
+    final playlist = _playlistById(channel.playlistId);
 
     loadingEpg = true;
     notifyListeners();
     try {
-      final epgFuture = api
-          .get(
-            '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(effectiveEpgChannelId)}',
-          )
-          .then(
-            (raw) => (raw as List<dynamic>)
-                .map((e) => EpgEntry.fromJson(e as Map<String, dynamic>))
-                .toList(),
-          );
+      if (playlist.type == 'vuplus') {
+        final vuplusApi = _vuplusApiForPlaylist(playlist);
+        final epgXml = await vuplusApi.fetchEpg(effectiveEpgChannelId);
+        epgEntries = _parseVuplusEpg(epgXml, effectiveEpgChannelId);
 
-      Future<Set<VuplusTimer>?>? timersFuture;
-      if (isSelectedPlaylistVuplus) {
-        timersFuture = () async {
-          try {
-            final raw = await api.get('/playlists/$epgPlaylistId/timers');
-            return (raw as List<dynamic>)
-                .map((e) => VuplusTimer.fromJson(e as Map<String, dynamic>))
-                .toSet();
-          } catch (_) {
-            return null;
-          }
-        }();
-      }
-
-      if (timersFuture != null) {
-        final results = await Future.wait<dynamic>([epgFuture, timersFuture]);
-        epgEntries = results[0] as List<EpgEntry>;
-        final timers = results[1] as Set<VuplusTimer>?;
-        if (timers != null) {
-          _timerKeys = timers
-              .map(
-                (t) => _timerKeyFromServiceRefAndBegin(
-                  t.channelEpgId,
-                  t.beginUnix,
-                ),
-              )
-              .toSet();
+        try {
+          final timersXml = await vuplusApi.fetchTimers();
+          _timerKeys = _parseVuplusTimerKeys(timersXml);
+        } catch (_) {
+          _timerKeys = {};
         }
       } else {
-        epgEntries = await epgFuture;
+        epgEntries = await _loadXmltvEpgForChannel(playlist, channel);
+        _timerKeys = {};
       }
+
+      epgSourceMissing = epgEntries.isEmpty;
     } finally {
       loadingEpg = false;
       notifyListeners();
     }
-  }
-
-  Future<void> removeEpgTimer(EpgEntry entry) async {
-    final playlist = selectedPlaylist;
-    if (playlist == null) {
-      throw const ApiException('No selected playlist');
-    }
-    if (playlist.type != 'vuplus') {
-      throw const ApiException(
-        'Removing timer is only supported for VU+ playlists',
-      );
-    }
-
-    final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
-    final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
-
-    final params =
-        '?channel_epg_id=${Uri.encodeComponent(entry.channelEpgId)}&begin_unix=$beginUnix';
-    await api.delete('/playlists/${playlist.id}/timers$params');
-
-    // Optimistically remove the timer key so the UI updates immediately.
-    _timerKeys = Set.from(_timerKeys)..remove(key);
-    notifyListeners();
   }
 
   void stopPlayback() {
@@ -440,18 +1043,13 @@ class PlaylistStore extends ChangeNotifier {
     _refreshingPlaylistIds.add(id);
     notifyListeners();
     try {
-      final response = await api.post('/playlists/$id/refresh');
-      int? refreshedCount;
-      if (response is Map<String, dynamic>) {
-        final count = response['count'];
-        if (count is int) {
-          refreshedCount = count;
-        } else if (count is num) {
-          refreshedCount = count.toInt();
-        }
-      }
+      final loaded = await _getOrLoadPlaylistChannels(id, force: true);
+      final refreshedCount = loaded.length;
 
-      await selectPlaylist(id);
+      if (selectedPlaylistId == id) {
+        await fetchGroups(id);
+        await fetchChannels(id, selectedGroup);
+      }
       _globalGroups = const [];
       _globalChannels = const [];
       return refreshedCount;
@@ -464,34 +1062,75 @@ class PlaylistStore extends ChangeNotifier {
   // --- Favorites ---
 
   Future<void> toggleFavorite(Channel channel) async {
+    final key = _favoriteSourceKeyForChannel(channel);
     if (channel.isFavorite) {
-      await api.delete('/favorites/channels/${channel.id}');
+      await api.delete(
+        '/favorites/channels?playlist_id=${channel.playlistId}&stream_id=${Uri.encodeQueryComponent(channel.streamId)}',
+      );
     } else {
-      await api.post('/favorites/channels', {'channel_id': channel.id});
+      await api.post('/favorites/channels', {
+        'playlist_id': channel.playlistId,
+        'stream_id': channel.streamId,
+        'name': channel.name,
+        'group_name': channel.groupName,
+        'stream_url': channel.streamUrl,
+        'logo_url': channel.logoUrl,
+        'epg_channel_id': channel.epgChannelId,
+        'sort_order': channel.sortOrder ?? 0,
+      });
     }
 
     final nextIsFavorite = !channel.isFavorite;
+    final nextFavoriteKeys = Set<String>.from(_favoriteSourceKeys);
+    if (nextIsFavorite) {
+      nextFavoriteKeys.add(key);
+    } else {
+      nextFavoriteKeys.remove(key);
+    }
+    _favoriteSourceKeys = nextFavoriteKeys;
 
     channels = sortChannels(
       channels.map(
-        (c) => c.id == channel.id ? c.copyWith(isFavorite: nextIsFavorite) : c,
+        (c) => _favoriteSourceKeyForChannel(c) == key
+            ? c.copyWith(isFavorite: nextIsFavorite)
+            : c,
       ),
       channelSortOrder,
     );
 
     _globalChannels = sortChannels(
       _globalChannels.map(
-        (c) => c.id == channel.id ? c.copyWith(isFavorite: nextIsFavorite) : c,
+        (c) => _favoriteSourceKeyForChannel(c) == key
+            ? c.copyWith(isFavorite: nextIsFavorite)
+            : c,
       ),
       channelSortOrder,
     );
 
-    if (nowPlaying?.id == channel.id) {
+    if (nowPlaying != null &&
+        _favoriteSourceKeyForChannel(nowPlaying!) == key) {
       nowPlaying = nowPlaying!.copyWith(isFavorite: nextIsFavorite);
     }
 
+    final updatedCache = <int, List<Channel>>{};
+    for (final entry in _playlistChannelsCache.entries) {
+      updatedCache[entry.key] = sortChannels(
+        entry.value.map(
+          (c) => _favoriteSourceKeyForChannel(c) == key
+              ? c.copyWith(isFavorite: nextIsFavorite)
+              : c,
+        ),
+        channelSortOrder,
+      );
+    }
+    _playlistChannelsCache
+      ..clear()
+      ..addAll(updatedCache);
+
     if (nextIsFavorite) {
-      if (!favoriteChannels.any((c) => c.id == channel.id)) {
+      if (!favoriteChannels.any(
+        (c) => _favoriteSourceKeyForChannel(c) == key,
+      )) {
         favoriteChannels = sortChannels([
           channel.copyWith(isFavorite: true),
           ...favoriteChannels,
@@ -499,7 +1138,7 @@ class PlaylistStore extends ChangeNotifier {
       }
     } else {
       favoriteChannels = favoriteChannels
-          .where((c) => c.id != channel.id)
+          .where((c) => _favoriteSourceKeyForChannel(c) != key)
           .toList();
     }
 
@@ -663,12 +1302,14 @@ class PlaylistStore extends ChangeNotifier {
     loadingFavoriteChannels = true;
     notifyListeners();
     try {
-      favoriteChannels = sortChannels(
-        (await api.get('/favorites/channels') as List<dynamic>).map(
-          (e) => Channel.fromJson(e as Map<String, dynamic>),
-        ),
-        channelSortOrder,
-      );
+      final fetched = (await api.get('/favorites/channels') as List<dynamic>)
+          .map((e) => Channel.fromJson(e as Map<String, dynamic>))
+          .toList();
+      favoriteChannels = sortChannels(fetched, channelSortOrder);
+      _favoriteSourceKeys = fetched
+          .map((c) => _favoriteSourceKeyForChannel(c))
+          .toSet();
+      _reconcileFavoriteChannelFlags();
     } finally {
       loadingFavoriteChannels = false;
       notifyListeners();
@@ -702,11 +1343,10 @@ class PlaylistStore extends ChangeNotifier {
 
     Future<bool> playlistContainsGroup(int playlistId) async {
       try {
-        final rawGroups =
-            await api.get('/playlists/$playlistId/groups') as List<dynamic>;
-        return rawGroups
-            .map((e) => Group.fromJson(e as Map<String, dynamic>))
-            .any((g) => g.name.trim().toLowerCase() == normalizedName);
+        final loadedChannels = await _getOrLoadPlaylistChannels(playlistId);
+        return loadedChannels.any(
+          (c) => c.groupName.trim().toLowerCase() == normalizedName,
+        );
       } catch (_) {
         // Ignore per-playlist failures so one bad source cannot block favoriting.
         return false;
@@ -795,7 +1435,7 @@ class PlaylistStore extends ChangeNotifier {
     final result = await api.post('/playlists', body) as Map<String, dynamic>;
 
     final id = (result['id'] as num).toInt();
-    await api.post('/playlists/$id/refresh');
+    _playlistChannelsCache.remove(id);
     await fetchPlaylists();
     await selectPlaylist(id);
   }
@@ -854,7 +1494,7 @@ class PlaylistStore extends ChangeNotifier {
     }
 
     await api.put('/playlists/$id', body);
-    await api.post('/playlists/$id/refresh');
+    _playlistChannelsCache.remove(id);
     await fetchPlaylists();
     await selectPlaylist(id);
     _globalGroups = const [];
@@ -881,7 +1521,7 @@ class PlaylistStore extends ChangeNotifier {
             as Map<String, dynamic>;
 
     final id = (result['id'] as num).toInt();
-    await api.post('/playlists/$id/refresh');
+    _playlistChannelsCache.remove(id);
     await fetchPlaylists();
     await selectPlaylist(id);
   }
@@ -904,7 +1544,7 @@ class PlaylistStore extends ChangeNotifier {
             as Map<String, dynamic>;
 
     final id = (result['id'] as num).toInt();
-    await api.post('/playlists/$id/refresh');
+    _playlistChannelsCache.remove(id);
     await fetchPlaylists();
     await selectPlaylist(id);
   }

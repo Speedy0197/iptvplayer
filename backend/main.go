@@ -83,6 +83,7 @@ func main() {
 			// Favorites
 			r.Get("/favorites/channels", handlers.ListFavoriteChannels)
 			r.Post("/favorites/channels", handlers.AddFavoriteChannel)
+			r.Delete("/favorites/channels", handlers.RemoveFavoriteChannel)
 			r.Delete("/favorites/channels/{channel_id}", handlers.RemoveFavoriteChannel)
 
 			r.Get("/favorites/groups", handlers.ListFavoriteGroups)
