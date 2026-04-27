@@ -963,8 +963,10 @@ type vuplusTimerListXML struct {
 type vuplusTimerXML struct {
 	ServiceRef string `xml:"e2servicereference"`
 	Name       string `xml:"e2name"`
-	Begin      string `xml:"e2begin"`
-	End        string `xml:"e2end"`
+	Begin      string `xml:"e2timebegin"`
+	End        string `xml:"e2timeend"`
+	BeginAlt   string `xml:"e2begin"`
+	EndAlt     string `xml:"e2end"`
 	Disabled   string `xml:"e2disabled"`
 }
 
@@ -1007,11 +1009,20 @@ func fetchVuplusTimerList(vuplusIP, vuplusPort string) ([]vuplusTimerEntry, erro
 		if sRef == "" {
 			continue
 		}
-		begin, err := strconv.ParseInt(strings.TrimSpace(t.Begin), 10, 64)
+		beginRaw := strings.TrimSpace(t.Begin)
+		if beginRaw == "" {
+			beginRaw = strings.TrimSpace(t.BeginAlt)
+		}
+		endRaw := strings.TrimSpace(t.End)
+		if endRaw == "" {
+			endRaw = strings.TrimSpace(t.EndAlt)
+		}
+
+		begin, err := strconv.ParseInt(beginRaw, 10, 64)
 		if err != nil {
 			continue
 		}
-		end, _ := strconv.ParseInt(strings.TrimSpace(t.End), 10, 64)
+		end, _ := strconv.ParseInt(endRaw, 10, 64)
 		result = append(result, vuplusTimerEntry{
 			ChannelEpgID: sRef,
 			BeginUnix:    begin,

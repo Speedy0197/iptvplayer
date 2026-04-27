@@ -57,10 +57,35 @@ class PlaylistStore extends ChangeNotifier {
 
   bool get isSelectedPlaylistVuplus => selectedPlaylist?.type == 'vuplus';
 
+  String _safeDecodeComponent(String value) {
+    try {
+      return Uri.decodeComponent(value);
+    } catch (_) {
+      return value;
+    }
+  }
+
+  String _normalizeServiceRef(String raw) {
+    final decoded = _safeDecodeComponent(raw).trim().toLowerCase();
+    if (decoded.isEmpty) {
+      return '';
+    }
+
+    final parts = decoded.split(':');
+    if (parts.length >= 10) {
+      return '${parts.take(10).join(':')}:';
+    }
+    return decoded;
+  }
+
+  String _timerKeyFromServiceRefAndBegin(String serviceRef, int beginUnix) {
+    return '${_normalizeServiceRef(serviceRef)}:$beginUnix';
+  }
+
   /// Returns true if [entry] has a matching timer scheduled on the VU+ box.
   bool isTimerScheduled(EpgEntry entry) {
-    final key =
-        '${Uri.decodeComponent(entry.channelEpgId).toLowerCase()}:${entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000}';
+    final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
+    final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
     return _timerKeys.contains(key);
   }
 
@@ -291,35 +316,46 @@ class PlaylistStore extends ChangeNotifier {
     loadingEpg = true;
     notifyListeners();
     try {
-      final futures = <Future>[
-        api
-            .get(
-              '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(effectiveEpgChannelId)}',
-            )
-            .then(
-              (raw) => (raw as List<dynamic>)
-                  .map((e) => EpgEntry.fromJson(e as Map<String, dynamic>))
-                  .toList(),
-            ),
-      ];
+      final epgFuture = api
+          .get(
+            '/playlists/$epgPlaylistId/epg/${Uri.encodeComponent(effectiveEpgChannelId)}',
+          )
+          .then(
+            (raw) => (raw as List<dynamic>)
+                .map((e) => EpgEntry.fromJson(e as Map<String, dynamic>))
+                .toList(),
+          );
 
+      Future<Set<VuplusTimer>?>? timersFuture;
       if (isSelectedPlaylistVuplus) {
-        futures.add(
-          api
-              .get('/playlists/$epgPlaylistId/timers')
-              .then(
-                (raw) => (raw as List<dynamic>)
-                    .map((e) => VuplusTimer.fromJson(e as Map<String, dynamic>))
-                    .toSet(),
-              )
-              .catchError((_) => <VuplusTimer>{}),
-        );
+        timersFuture = () async {
+          try {
+            final raw = await api.get('/playlists/$epgPlaylistId/timers');
+            return (raw as List<dynamic>)
+                .map((e) => VuplusTimer.fromJson(e as Map<String, dynamic>))
+                .toSet();
+          } catch (_) {
+            return null;
+          }
+        }();
       }
 
-      final results = await Future.wait(futures);
-      epgEntries = results[0] as List<EpgEntry>;
-      if (futures.length > 1) {
-        _timerKeys = (results[1] as Set<VuplusTimer>).map((t) => t.key).toSet();
+      if (timersFuture != null) {
+        final results = await Future.wait<dynamic>([epgFuture, timersFuture]);
+        epgEntries = results[0] as List<EpgEntry>;
+        final timers = results[1] as Set<VuplusTimer>?;
+        if (timers != null) {
+          _timerKeys = timers
+              .map(
+                (t) => _timerKeyFromServiceRefAndBegin(
+                  t.channelEpgId,
+                  t.beginUnix,
+                ),
+              )
+              .toSet();
+        }
+      } else {
+        epgEntries = await epgFuture;
       }
     } finally {
       loadingEpg = false;
@@ -345,9 +381,9 @@ class PlaylistStore extends ChangeNotifier {
     });
 
     // Optimistically mark the timer as scheduled so the UI updates immediately.
-    final decodedId = Uri.decodeComponent(entry.channelEpgId).toLowerCase();
     final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
-    _timerKeys = {..._timerKeys, '$decodedId:$beginUnix'};
+    final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
+    _timerKeys = {..._timerKeys, key};
     notifyListeners();
   }
 
