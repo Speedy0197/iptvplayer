@@ -37,8 +37,9 @@ jobs:
       - name: Build Android APK (Universal)
         working-directory: flutter_app
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           flutter build apk --release \
-            --build-name="${{ github.ref_name }}" \
+            --build-name="$VERSION" \
             --build-number="$(date +%s)"
           mv build/app/outputs/flutter-apk/app-release.apk streampilot-android.apk
 
