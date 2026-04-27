@@ -48,7 +48,7 @@ jobs:
               "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
               "keyPassword=$ANDROID_KEY_PASSWORD" \
               "keyAlias=$ANDROID_KEY_ALIAS" \
-              "storeFile=upload-keystore.jks" \
+              "storeFile=../upload-keystore.jks" \
               > key.properties
           else
             echo "Android signing secrets not fully configured; build will use debug signing."

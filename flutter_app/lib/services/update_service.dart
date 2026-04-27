@@ -11,6 +11,9 @@ import '../config/app_config.dart';
 typedef ProgressCallback = void Function(double progress);
 
 class UpdateService {
+  static const Duration _downloadChunkTimeout = Duration(seconds: 30);
+  static const Duration _downloadOverallTimeout = Duration(minutes: 10);
+
   /// The platform-appropriate action when tapping "Update Now".
   /// iOS opens TestFlight; others download + install the binary.
   static bool get isDirectInstall =>
@@ -29,6 +32,16 @@ class UpdateService {
     String url, {
     required ProgressCallback onProgress,
   }) async {
+    return _downloadInternal(url, onProgress: onProgress).timeout(
+      _downloadOverallTimeout,
+      onTimeout: () => null,
+    );
+  }
+
+  static Future<String?> _downloadInternal(
+    String url, {
+    required ProgressCallback onProgress,
+  }) async {
     final client = http.Client();
     try {
       final response =
@@ -43,12 +56,11 @@ class UpdateService {
       final file = File('${dir.path}/$fileName');
       final sink = file.openWrite();
 
-      await for (final chunk in response.stream.timeout(const Duration(seconds: 30))) {
+      await for (final chunk in response.stream.timeout(_downloadChunkTimeout)) {
         sink.add(chunk);
         received += chunk.length;
         if (total > 0) {
-          // Avoid showing 100% before the stream is fully written and closed.
-          final progress = (received / total).clamp(0.0, 0.99).toDouble();
+          final progress = (received / total).clamp(0.0, 1.0).toDouble();
           onProgress(progress);
         }
       }
@@ -71,8 +83,17 @@ class UpdateService {
     if (Platform.isAndroid) {
       await OpenFilex.open(filePath);
     } else if (Platform.isMacOS) {
-      // Mount the DMG; user drags to Applications.
-      await Process.run('open', [filePath]);
+      // Mount the DMG and close the app so the user can replace it cleanly.
+      final result = await Process.run('open', [filePath]);
+      if (result.exitCode != 0) {
+        throw ProcessException(
+          'open',
+          [filePath],
+          (result.stderr ?? result.stdout).toString(),
+          result.exitCode,
+        );
+      }
+      exit(0);
     } else if (Platform.isWindows) {
       // Launch the installer visibly so users can confirm/update via the wizard.
       await OpenFilex.open(filePath);
