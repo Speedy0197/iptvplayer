@@ -206,11 +206,33 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             Text(
               widget.timeRange,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
+            if (widget.canRecord) ...[
+              const SizedBox(width: 4),
+              SizedBox(
+                width: 32,
+                height: 32,
+                child: _savingRecording
+                    ? const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : IconButton(
+                        padding: EdgeInsets.zero,
+                        iconSize: 20,
+                        tooltip: widget.hasEnded ? 'Program ended' : 'Record',
+                        onPressed: widget.hasEnded ? null : _record,
+                        color: widget.hasEnded
+                            ? null
+                            : Theme.of(context).colorScheme.error,
+                        icon: const Icon(Icons.fiber_manual_record),
+                      ),
+              ),
+            ],
           ],
         ),
         subtitle: _expanded
@@ -221,22 +243,6 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                 overflow: TextOverflow.ellipsis,
               ),
         children: [
-          if (widget.canRecord)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.icon(
-                onPressed: widget.hasEnded || _savingRecording ? null : _record,
-                icon: _savingRecording
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.fiber_manual_record),
-                label: Text(widget.hasEnded ? 'Program ended' : 'Record'),
-              ),
-            ),
-          if (widget.canRecord) const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerLeft,
             child: Text(widget.description),

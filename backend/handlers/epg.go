@@ -835,7 +835,14 @@ func RecordVuplusEPG(w http.ResponseWriter, r *http.Request) {
 		vuplusPort = "80"
 	}
 
-	if err := createVuplusRecordingTimer(vuplusIP, vuplusPort, channelEpgID, startTime, endTime, title, description); err != nil {
+	// The channel EPG ID is stored URL-encoded (chi keeps raw path params).
+	// Decode it once so VU+ receives the plain service reference (e.g. "1:0:19:...").
+	sRef, decodeErr := url.PathUnescape(channelEpgID)
+	if decodeErr != nil {
+		sRef = channelEpgID
+	}
+
+	if err := createVuplusRecordingTimer(vuplusIP, vuplusPort, sRef, startTime, endTime, title, description); err != nil {
 		log.Printf("Vu+ recording timer create failed playlist_id=%d channel_epg_id=%q: %v", playlistID, channelEpgID, err)
 		writeError(w, http.StatusBadGateway, "failed to create recording on vuplus device")
 		return
