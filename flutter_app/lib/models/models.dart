@@ -196,12 +196,17 @@ class VuplusTimer {
   final int beginUnix;
   final int endUnix;
   final String name;
+  /// Absolute path to the recording file on the VU+ box, e.g.
+  /// `/hdd/recordings/SomeName_20260427.ts`. Empty for timers that
+  /// haven't started yet.
+  final String filename;
 
   const VuplusTimer({
     required this.channelEpgId,
     required this.beginUnix,
     required this.endUnix,
     required this.name,
+    this.filename = '',
   });
 
   factory VuplusTimer.fromJson(Map<String, dynamic> json) {
@@ -210,6 +215,7 @@ class VuplusTimer {
       beginUnix: (json['begin_unix'] as num?)?.toInt() ?? 0,
       endUnix: (json['end_unix'] as num?)?.toInt() ?? 0,
       name: (json['name'] as String?) ?? '',
+      filename: (json['filename'] as String?) ?? '',
     );
   }
 

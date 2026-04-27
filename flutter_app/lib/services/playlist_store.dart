@@ -94,6 +94,7 @@ class PlaylistStore extends ChangeNotifier {
   Future<void> fetchTimersFromVuplus() async {
     final vuplusApi = _selectedVuplusApi();
     final xml = await vuplusApi.fetchTimers();
+    _vuplusTimerList = _parseVuplusTimers(xml);
     _timerKeys = _parseVuplusTimerKeys(xml);
     notifyListeners();
   }
@@ -164,6 +165,7 @@ class PlaylistStore extends ChangeNotifier {
     }
 
     final refreshedTimersXml = await vuplusApi.fetchTimers();
+    _vuplusTimerList = _parseVuplusTimers(refreshedTimersXml);
     _timerKeys = _parseVuplusTimerKeys(refreshedTimersXml);
     notifyListeners();
   }
@@ -197,28 +199,16 @@ class PlaylistStore extends ChangeNotifier {
     return parsed.replace(queryParameters: qp).toString();
   }
 
-  String _sanitizeUriForLog(Uri uri) => _sanitizeUrlForLog(uri.toString());
-
-  void _xtreamLog(String message) {
-    if (kDebugMode) {
-      debugPrint('[XTREAM] $message');
-    }
-  }
-
   Future<http.Response> _httpGetWithRetry(
     Uri uri, {
     Map<String, String>? headers,
     int maxAttempts = 3,
-    String? debugLabel,
   }) async {
     Object? lastError;
-    final label = debugLabel ?? _sanitizeUriForLog(uri);
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        _xtreamLog('GET attempt $attempt/$maxAttempts -> $label');
         final response = await http.get(uri, headers: headers);
         final code = response.statusCode;
-        _xtreamLog('GET status $code <- $label');
         final retriable =
             code == 429 || code == 502 || code == 503 || code == 504;
         if (!retriable || attempt == maxAttempts) {
@@ -226,7 +216,6 @@ class PlaylistStore extends ChangeNotifier {
         }
       } catch (e) {
         lastError = e;
-        _xtreamLog('GET exception on attempt $attempt for $label: $e');
         if (attempt == maxAttempts) {
           rethrow;
         }
@@ -261,7 +250,6 @@ class PlaylistStore extends ChangeNotifier {
       final response = await _httpGetWithRetry(
         uri,
         headers: requestHeaders,
-        debugLabel: _sanitizeUriForLog(uri),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ApiException(
@@ -412,9 +400,6 @@ class PlaylistStore extends ChangeNotifier {
       'Accept': 'application/json,text/plain,*/*',
       'Connection': 'keep-alive',
     };
-    _xtreamLog(
-      'Loading Xtream playlist ${playlist.id} from ${_sanitizeUrlForLog(server)}',
-    );
 
     Future<List<dynamic>?> fetchXtreamAction(String action) async {
       final endpointCandidates = <String>['player_api.php', 'panel_api.php'];
@@ -430,28 +415,15 @@ class PlaylistStore extends ChangeNotifier {
           final response = await _httpGetWithRetry(
             uri,
             headers: headers,
-            debugLabel: '$action via $endpoint (${_sanitizeUriForLog(uri)})',
           );
           if (response.statusCode < 200 || response.statusCode >= 300) {
-            _xtreamLog(
-              'Action $action via $endpoint returned status ${response.statusCode}',
-            );
             continue;
           }
           final decoded = jsonDecode(response.body);
           if (decoded is List<dynamic>) {
-            _xtreamLog(
-              'Action $action via $endpoint succeeded with ${decoded.length} entries',
-            );
             return decoded;
           }
-          _xtreamLog(
-            'Action $action via $endpoint returned non-list payload (${decoded.runtimeType})',
-          );
         } catch (_) {
-          _xtreamLog(
-            'Action $action via $endpoint failed, trying next endpoint',
-          );
         }
       }
       return null;
@@ -567,9 +539,6 @@ class PlaylistStore extends ChangeNotifier {
     Object? lastError;
     for (var i = 0; i < m3uCandidates.length; i++) {
       final m3uUrl = m3uCandidates[i];
-      _xtreamLog(
-        'Trying Xtream M3U fallback ${i + 1}/${m3uCandidates.length}: ${_sanitizeUrlForLog(m3uUrl)}',
-      );
       final fallbackPlaylist = Playlist(
         id: playlist.id,
         name: playlist.name,
@@ -596,19 +565,14 @@ class PlaylistStore extends ChangeNotifier {
           },
         );
         if (loaded.isNotEmpty) {
-          _xtreamLog(
-            'Xtream M3U fallback succeeded with ${loaded.length} channels',
-          );
           if ((playlist.epgUrl ?? '').trim().isEmpty) {
             _runtimeEpgUrlByPlaylist[playlist.id] =
                 '$server/xmltv.php?username=$username&password=$password';
           }
           return loaded;
         }
-        _xtreamLog('Xtream M3U fallback returned empty channel list');
       } catch (e) {
         lastError = e;
-        _xtreamLog('Xtream M3U fallback failed: $e');
       }
     }
 
@@ -941,9 +905,6 @@ class PlaylistStore extends ChangeNotifier {
 
         final normalizedXmlId = _normalizeEpgMatchText(xmlId);
         if (_roughEpgNameMatch(normalizedChannelName, normalizedXmlId)) {
-          debugPrint(
-            '[EPG] ID match: "$normalizedChannelName" ~ "$normalizedXmlId" (id="$xmlId")',
-          );
           candidateChannelIds.add(xmlId);
           continue;
         }
@@ -957,9 +918,6 @@ class PlaylistStore extends ChangeNotifier {
           (v) => _roughEpgNameMatch(normalizedChannelName, v),
         );
         if (hasDisplayMatch) {
-          debugPrint(
-            '[EPG] display-name match: "$normalizedChannelName" ~ $displayNames (id="$xmlId")',
-          );
           candidateChannelIds.add(xmlId);
         }
       }
@@ -1093,6 +1051,7 @@ class PlaylistStore extends ChangeNotifier {
           beginUnix: begin,
           endUnix: end,
           name: timer.getElement('e2name')?.innerText.trim() ?? '',
+          filename: timer.getElement('e2filename')?.innerText.trim() ?? '',
         ),
       );
     }
@@ -1109,6 +1068,7 @@ class PlaylistStore extends ChangeNotifier {
   List<Group> favoriteGroups = const [];
   List<EpgEntry> epgEntries = const [];
   Set<String> _timerKeys = {};
+  List<VuplusTimer> _vuplusTimerList = const [];
   Set<String> _favoriteSourceKeys = {};
 
   int? selectedPlaylistId;
@@ -1221,6 +1181,35 @@ class PlaylistStore extends ChangeNotifier {
     final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
     final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
     return _timerKeys.contains(key);
+  }
+
+  /// Returns true if [channel] is a VU+ recording that is currently being written
+  /// (i.e. there is an active timer whose service ref matches and whose end time
+  /// is still in the future).
+  /// Extracts the file path from an enigma2 movie service reference.
+  /// E.g. `1:0:0:0:0:0:0:0:0:0:/hdd/recordings/Foo.ts` → `/hdd/recordings/Foo.ts`
+  String _filePathFromMovieRef(String ref) {
+    final parts = ref.split(':');
+    final idx = parts.indexWhere((p) => p.startsWith('/'));
+    if (idx < 0) return '';
+    return parts.sublist(idx).join(':');
+  }
+
+  bool isChannelActivelyRecording(Channel channel) {
+    if (channel.groupName != 'Aufnahmen') return false;
+    final nowUnix = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final filePath = _filePathFromMovieRef(channel.epgChannelId);
+    for (final t in _vuplusTimerList) {
+      if (t.endUnix <= nowUnix) continue;
+      if (filePath.isNotEmpty && t.filename.isNotEmpty) {
+        // Strip video/cut-marker extensions: .ts, .mkv, .mp4, .sc, .ap
+        final stripExt = RegExp(r'\.(ts|mkv|mp4|sc|ap)$', caseSensitive: false);
+        final tFile = t.filename.replaceAll(stripExt, '');
+        final cFile = filePath.replaceAll(stripExt, '');
+        if (tFile == cFile) return true;
+      }
+    }
+    return false;
   }
 
   // --- Derived list getters ---
@@ -1483,8 +1472,9 @@ class PlaylistStore extends ChangeNotifier {
       notifyListeners();
       try {
         epgEntries = const [];
-        _timerKeys = {};
         epgSourceMissing = true;
+        // Fetch timers so isChannelActivelyRecording() can match this recording.
+        await fetchTimersFromVuplus();
       } finally {
         loadingEpg = false;
         notifyListeners();
@@ -1502,8 +1492,10 @@ class PlaylistStore extends ChangeNotifier {
 
         try {
           final timersXml = await vuplusApi.fetchTimers();
+          _vuplusTimerList = _parseVuplusTimers(timersXml);
           _timerKeys = _parseVuplusTimerKeys(timersXml);
         } catch (_) {
+          _vuplusTimerList = const [];
           _timerKeys = {};
         }
       } else {

@@ -55,7 +55,10 @@ class PlayerPane extends StatelessWidget {
     }
 
     final headerContent = [
-      ChannelPlayer(streamUrl: channel.streamUrl),
+      ChannelPlayer(
+        streamUrl: channel.streamUrl,
+        isActiveRecording: store.isChannelActivelyRecording(channel),
+      ),
       const SizedBox(height: 12),
       Text(
         channel.name,

@@ -277,6 +277,35 @@
         <article class="card">
           <span class="platform">
             <span class="platform-icon">
+              <i class="fab fa-apple"></i>
+            </span>
+            iOS
+          </span>
+          <h2>iPhone / iPad</h2>
+          <p>Install via TestFlight. Scan the QR code with your iPhone camera.</p>
+          <div class="actions">
+            <a id="link-ios-testflight" class="btn btn-primary" href="#" target="_blank" rel="noopener">Open TestFlight</a>
+          </div>
+          <div class="qr-wrap">
+            <img id="ios-testflight-qr" alt="QR code to open TestFlight invite" />
+            <p id="ios-testflight-caption" class="qr-caption">Scan to open your TestFlight invite.</p>
+          </div>
+          <details>
+            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                <li>Tap "Open TestFlight" button above</li>
+                <li>Accept the invite in TestFlight app</li>
+                <li>Tap "Install" and wait for the app to download</li>
+                <li>Launch StreamPilot from your home screen</li>
+              </ol>
+            </div>
+          </details>
+        </article>
+
+        <article class="card">
+          <span class="platform">
+            <span class="platform-icon">
               <i class="fab fa-android"></i>
             </span>
             Android
@@ -303,57 +332,28 @@
         <article class="card">
           <span class="platform">
             <span class="platform-icon">
-              <i class="fab fa-android"></i>
+              <i class="fab fa-windows"></i>
             </span>
-            Android TV
+            Windows
           </span>
-          <h2>Smart TV</h2>
-          <p>Universal APK for Android TV and Google TV devices.</p>
-          <div class="actions">
-            <a id="link-android-tv" class="btn btn-primary" href="#">Download APK</a>
-          </div>
-          <details>
-            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
-              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
-                <li>Download the APK to USB or cloud storage</li>
-                <li>On your TV, open the file manager app</li>
-                <li>Navigate to the APK file and tap it</li>
-                <li>Confirm installation</li>
-                <li>Find StreamPilot in your TV's apps menu</li>
-              </ol>
-              <p style="margin-top: 12px; margin-bottom: 0; font-size: 0.9rem; color: var(--muted);"><strong>Note:</strong> Enable "Unknown sources" in TV Settings → Security if prompted.</p>
+          <h2>Desktop App</h2>
+          <p>Download and install on your Windows PC.</p>
+          <div class="card-footer">
+            <div class="actions">
+              <a id="link-windows" class="btn btn-primary" href="#">Download EXE</a>
             </div>
-          </details>
-        </article>
-
-        <article class="card">
-          <span class="platform">
-            <span class="platform-icon">
-              <i class="fab fa-apple"></i>
-            </span>
-            iOS
-          </span>
-          <h2>iPhone / iPad</h2>
-          <p>Install via TestFlight. Scan the QR code with your iPhone camera.</p>
-          <div class="actions">
-            <a id="link-ios-testflight" class="btn btn-primary" href="#" target="_blank" rel="noopener">Open TestFlight</a>
+            <details>
+              <summary style="cursor: pointer; color: var(--brand); font-weight: 600;">📖 Installation Instructions</summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+                <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                  <li>Download the EXE installer</li>
+                  <li>Double-click the installer to start setup</li>
+                  <li>If Windows SmartScreen appears, click "More info" then "Run anyway"</li>
+                  <li>Finish the setup wizard, then launch StreamPilot from Start menu or desktop shortcut</li>
+                </ol>
+              </div>
+            </details>
           </div>
-          <div class="qr-wrap">
-            <img id="ios-testflight-qr" alt="QR code to open TestFlight invite" />
-            <p id="ios-testflight-caption" class="qr-caption">Scan to open your TestFlight invite.</p>
-          </div>
-          <details>
-            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
-              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
-                <li>Tap "Open TestFlight" button above</li>
-                <li>Accept the invite in TestFlight app</li>
-                <li>Tap "Install" and wait for the app to download</li>
-                <li>Launch StreamPilot from your home screen</li>
-              </ol>
-            </div>
-          </details>
         </article>
 
         <article class="card">
@@ -386,28 +386,28 @@
         <article class="card">
           <span class="platform">
             <span class="platform-icon">
-              <i class="fab fa-windows"></i>
+              <i class="fab fa-android"></i>
             </span>
-            Windows
+            Android TV
           </span>
-          <h2>Desktop App</h2>
-          <p>Download and install on your Windows PC.</p>
-          <div class="card-footer">
-            <div class="actions">
-              <a id="link-windows" class="btn btn-primary" href="#">Download EXE</a>
-            </div>
-            <details>
-              <summary style="cursor: pointer; color: var(--brand); font-weight: 600;">📖 Installation Instructions</summary>
-              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
-                <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
-                  <li>Download the EXE installer</li>
-                  <li>Double-click the installer to start setup</li>
-                  <li>If Windows SmartScreen appears, click "More info" then "Run anyway"</li>
-                  <li>Finish the setup wizard, then launch StreamPilot from Start menu or desktop shortcut</li>
-                </ol>
-              </div>
-            </details>
+          <h2>Smart TV</h2>
+          <p>Universal APK for Android TV and Google TV devices.</p>
+          <div class="actions">
+            <a id="link-android-tv" class="btn btn-primary" href="#">Download APK</a>
           </div>
+          <details>
+            <summary style="cursor: pointer; color: var(--brand); font-weight: 600; margin-top: 12px;">📖 Installation Instructions</summary>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);">
+              <ol style="margin: 0; padding-left: 20px; font-size: 0.95rem;">
+                <li>Download the APK to USB or cloud storage</li>
+                <li>On your TV, open the file manager app</li>
+                <li>Navigate to the APK file and tap it</li>
+                <li>Confirm installation</li>
+                <li>Find StreamPilot in your TV's apps menu</li>
+              </ol>
+              <p style="margin-top: 12px; margin-bottom: 0; font-size: 0.9rem; color: var(--muted);"><strong>Note:</strong> Enable "Unknown sources" in TV Settings → Security if prompted.</p>
+            </div>
+          </details>
         </article>
       </section>
 
