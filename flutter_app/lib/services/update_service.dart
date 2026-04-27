@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
@@ -42,15 +43,22 @@ class UpdateService {
       final file = File('${dir.path}/$fileName');
       final sink = file.openWrite();
 
-      await for (final chunk in response.stream) {
+      await for (final chunk in response.stream.timeout(const Duration(seconds: 30))) {
         sink.add(chunk);
         received += chunk.length;
-        if (total > 0) onProgress(received / total);
+        if (total > 0) {
+          // Avoid showing 100% before the stream is fully written and closed.
+          final progress = (received / total).clamp(0.0, 0.99).toDouble();
+          onProgress(progress);
+        }
       }
 
       await sink.flush();
       await sink.close();
+      onProgress(1.0);
       return file.path;
+    } on TimeoutException {
+      return null;
     } catch (_) {
       return null;
     } finally {
