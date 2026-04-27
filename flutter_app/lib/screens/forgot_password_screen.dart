@@ -34,9 +34,63 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     super.dispose();
   }
 
+  Future<void> _editField({
+    required String title,
+    required TextEditingController controller,
+    bool obscure = false,
+    TextInputType? keyboardType,
+  }) async {
+    final tempController = TextEditingController(text: controller.text);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: tempController,
+            autofocus: true,
+            obscureText: obscure,
+            keyboardType: keyboardType,
+            decoration: InputDecoration(labelText: title),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                tempController.text,
+              ),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    tempController.dispose();
+    if (value == null || !mounted) return;
+    setState(() {
+      controller.text = value.trimRight();
+    });
+  }
+
   Future<void> _requestReset() async {
-    if (!_requestFormKey.currentState!.validate()) {
-      return;
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+    if (!directionalNavigation) {
+      if (!_requestFormKey.currentState!.validate()) {
+        return;
+      }
+    } else {
+      final email = _emailCtrl.text.trim();
+      if (email.isEmpty || !email.contains('@')) {
+        setState(() {
+          _requestMessage = 'Enter a valid email';
+        });
+        return;
+      }
     }
 
     setState(() {
@@ -79,8 +133,34 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _submitNewPassword() async {
-    if (!_resetFormKey.currentState!.validate()) {
-      return;
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+    if (!directionalNavigation) {
+      if (!_resetFormKey.currentState!.validate()) {
+        return;
+      }
+    } else {
+      final code = _tokenCtrl.text.trim();
+      final newPassword = _newPasswordCtrl.text;
+      final confirm = _confirmCtrl.text;
+      if (!RegExp(r'^\d{4}$').hasMatch(code)) {
+        setState(() {
+          _resetError = 'Enter the 4-digit code';
+        });
+        return;
+      }
+      if (newPassword.length < 8) {
+        setState(() {
+          _resetError = 'At least 8 characters';
+        });
+        return;
+      }
+      if (confirm != newPassword) {
+        setState(() {
+          _resetError = 'Passwords do not match';
+        });
+        return;
+      }
     }
 
     setState(() {
@@ -126,6 +206,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Reset password')),
       body: SingleChildScrollView(
@@ -152,24 +235,43 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _emailCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Email',
-                              prefixIcon: Icon(Icons.alternate_email),
+                          if (!directionalNavigation)
+                            TextFormField(
+                              controller: _emailCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Email',
+                                prefixIcon: Icon(Icons.alternate_email),
+                              ),
+                              keyboardType: TextInputType.emailAddress,
+                              validator: (value) {
+                                final v = value?.trim() ?? '';
+                                if (v.isEmpty) {
+                                  return 'Required';
+                                }
+                                if (!v.contains('@')) {
+                                  return 'Enter a valid email';
+                                }
+                                return null;
+                              },
+                            )
+                          else
+                            OutlinedButton.icon(
+                              onPressed: _requestBusy
+                                  ? null
+                                  : () => _editField(
+                                      title: 'Email',
+                                      controller: _emailCtrl,
+                                      keyboardType: TextInputType.emailAddress,
+                                    ),
+                              icon: const Icon(Icons.alternate_email),
+                              label: Text(
+                                _emailCtrl.text.trim().isEmpty
+                                    ? 'Set email'
+                                    : _emailCtrl.text.trim(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                            keyboardType: TextInputType.emailAddress,
-                            validator: (value) {
-                              final v = value?.trim() ?? '';
-                              if (v.isEmpty) {
-                                return 'Required';
-                              }
-                              if (!v.contains('@')) {
-                                return 'Enter a valid email';
-                              }
-                              return null;
-                            },
-                          ),
                           const SizedBox(height: 12),
                           FilledButton(
                             onPressed: _requestBusy ? null : _requestReset,
@@ -209,59 +311,112 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _tokenCtrl,
-                            decoration: const InputDecoration(
-                              labelText: '4-digit reset code',
-                              prefixIcon: Icon(Icons.key_outlined),
+                          if (!directionalNavigation)
+                            TextFormField(
+                              controller: _tokenCtrl,
+                              decoration: const InputDecoration(
+                                labelText: '4-digit reset code',
+                                prefixIcon: Icon(Icons.key_outlined),
+                              ),
+                              keyboardType: TextInputType.number,
+                              validator: (value) {
+                                final v = (value ?? '').trim();
+                                final is4Digits = RegExp(
+                                  r'^\d{4}$',
+                                ).hasMatch(v);
+                                if (!is4Digits) {
+                                  return 'Enter the 4-digit code';
+                                }
+                                return null;
+                              },
+                            )
+                          else
+                            OutlinedButton.icon(
+                              onPressed: _resetBusy
+                                  ? null
+                                  : () => _editField(
+                                      title: '4-digit reset code',
+                                      controller: _tokenCtrl,
+                                      keyboardType: TextInputType.number,
+                                    ),
+                              icon: const Icon(Icons.key_outlined),
+                              label: Text(
+                                _tokenCtrl.text.trim().isEmpty
+                                    ? 'Enter reset code'
+                                    : _tokenCtrl.text.trim(),
+                              ),
                             ),
-                            keyboardType: TextInputType.number,
-                            validator: (value) {
-                              final v = (value ?? '').trim();
-                              final is4Digits = RegExp(r'^\d{4}$').hasMatch(v);
-                              if (!is4Digits) {
-                                return 'Enter the 4-digit code';
-                              }
-                              return null;
-                            },
-                          ),
                           const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _newPasswordCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'New password',
-                              prefixIcon: Icon(Icons.lock_outline),
+                          if (!directionalNavigation)
+                            TextFormField(
+                              controller: _newPasswordCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'New password',
+                                prefixIcon: Icon(Icons.lock_outline),
+                              ),
+                              obscureText: true,
+                              validator: (value) {
+                                final v = value ?? '';
+                                if (v.isEmpty) {
+                                  return 'Required';
+                                }
+                                if (v.length < 8) {
+                                  return 'At least 8 characters';
+                                }
+                                return null;
+                              },
+                            )
+                          else
+                            OutlinedButton.icon(
+                              onPressed: _resetBusy
+                                  ? null
+                                  : () => _editField(
+                                      title: 'New password',
+                                      controller: _newPasswordCtrl,
+                                      obscure: true,
+                                    ),
+                              icon: const Icon(Icons.lock_outline),
+                              label: Text(
+                                _newPasswordCtrl.text.isEmpty
+                                    ? 'Set new password'
+                                    : 'Password set',
+                              ),
                             ),
-                            obscureText: true,
-                            validator: (value) {
-                              final v = value ?? '';
-                              if (v.isEmpty) {
-                                return 'Required';
-                              }
-                              if (v.length < 8) {
-                                return 'At least 8 characters';
-                              }
-                              return null;
-                            },
-                          ),
                           const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _confirmCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Confirm new password',
-                              prefixIcon: Icon(Icons.verified_user_outlined),
+                          if (!directionalNavigation)
+                            TextFormField(
+                              controller: _confirmCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Confirm new password',
+                                prefixIcon: Icon(Icons.verified_user_outlined),
+                              ),
+                              obscureText: true,
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Required';
+                                }
+                                if (value != _newPasswordCtrl.text) {
+                                  return 'Passwords do not match';
+                                }
+                                return null;
+                              },
+                            )
+                          else
+                            OutlinedButton.icon(
+                              onPressed: _resetBusy
+                                  ? null
+                                  : () => _editField(
+                                      title: 'Confirm new password',
+                                      controller: _confirmCtrl,
+                                      obscure: true,
+                                    ),
+                              icon: const Icon(Icons.verified_user_outlined),
+                              label: Text(
+                                _confirmCtrl.text.isEmpty
+                                    ? 'Confirm new password'
+                                    : 'Confirmation set',
+                              ),
                             ),
-                            obscureText: true,
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Required';
-                              }
-                              if (value != _newPasswordCtrl.text) {
-                                return 'Passwords do not match';
-                              }
-                              return null;
-                            },
-                          ),
                           if (_resetError != null) ...[
                             const SizedBox(height: 8),
                             Text(

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -47,11 +48,26 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    final auth = context.read<AuthStore>();
+  bool _isTvInputMode(BuildContext context) {
     final directionalNavigation =
         MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
-    if (!directionalNavigation) {
+    if (directionalNavigation) {
+      return true;
+    }
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      final size = MediaQuery.sizeOf(context);
+      // Fallback for Android TV devices that may not report directional mode.
+      return size.width >= 960 || size.height >= 960;
+    }
+
+    return false;
+  }
+
+  Future<void> _submit() async {
+    final auth = context.read<AuthStore>();
+    final tvInputMode = _isTvInputMode(context);
+    if (!tvInputMode) {
       if (!_formKey.currentState!.validate()) return;
     } else {
       final email = _emailCtrl.text.trim();
@@ -99,38 +115,58 @@ class _LoginScreenState extends State<LoginScreen> {
     TextInputType? keyboardType,
   }) async {
     final tempController = TextEditingController(text: controller.text);
+    final inputFocus = FocusNode();
+
+    void submitValue(BuildContext dialogContext) {
+      Navigator.of(dialogContext).pop(tempController.text);
+    }
+
     final value = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: tempController,
-            autofocus: true,
-            obscureText: obscure,
-            keyboardType: keyboardType,
-            decoration: InputDecoration(labelText: title),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) return;
+            if (inputFocus.hasFocus) {
+              inputFocus.unfocus();
+              return;
+            }
+            submitValue(dialogContext);
+          },
+          child: AlertDialog(
+            title: Text(title),
+            content: TextField(
+              focusNode: inputFocus,
+              controller: tempController,
+              autofocus: true,
+              obscureText: obscure,
+              keyboardType: keyboardType,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => submitValue(dialogContext),
+              decoration: InputDecoration(labelText: title),
             ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(
-                tempController.text,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
               ),
-              child: const Text('Save'),
-            ),
-          ],
+              FilledButton(
+                onPressed: () => submitValue(dialogContext),
+                child: const Text('Save'),
+              ),
+            ],
+          ),
         );
       },
     );
 
+    inputFocus.dispose();
     tempController.dispose();
     if (value == null) return;
     setState(() {
-      controller.text = value.trimRight();
+      controller.text = obscure ? value : value.trim();
     });
   }
 
@@ -244,8 +280,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLoginForm(ThemeData theme, AuthStore auth) {
-    final directionalNavigation =
-        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+    final tvInputMode = _isTvInputMode(context);
 
     return Form(
       key: _formKey,
@@ -273,7 +308,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          if (!directionalNavigation) ...[
+          if (!tvInputMode) ...[
             TextFormField(
               controller: _emailCtrl,
               decoration: const InputDecoration(

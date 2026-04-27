@@ -331,6 +331,41 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _editSearchQuery(BuildContext dialogContext) async {
+    final tempController = TextEditingController(text: _searchCtrl.text);
+    final value = await showDialog<String>(
+      context: dialogContext,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Search channels, groups'),
+          content: TextField(
+            controller: tempController,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Search query',
+              prefixIcon: Icon(Icons.search),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(tempController.text),
+              child: const Text('Apply'),
+            ),
+          ],
+        );
+      },
+    );
+
+    tempController.dispose();
+    if (!mounted || value == null) return;
+    _searchCtrl.text = value;
+    context.read<PlaylistStore>().setSearchQuery(value);
+  }
+
   Future<void> _showSearchDialog() async {
     if (!mounted || _searchDialogOpen) return;
 
@@ -371,18 +406,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     children: [
-                      TextFormField(
-                        initialValue: _searchCtrl.text,
-                        autofocus: !directionalNavigation,
-                        decoration: const InputDecoration(
-                          labelText: 'Search channels, groups',
-                          prefixIcon: Icon(Icons.search),
+                      if (!directionalNavigation)
+                        TextFormField(
+                          initialValue: _searchCtrl.text,
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Search channels, groups',
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                          onChanged: (value) {
+                            _searchCtrl.text = value;
+                            context.read<PlaylistStore>().setSearchQuery(value);
+                          },
+                        )
+                      else
+                        OutlinedButton.icon(
+                          onPressed: () => _editSearchQuery(ctx),
+                          icon: const Icon(Icons.search),
+                          label: Text(
+                            _searchCtrl.text.trim().isEmpty
+                                ? 'Enter search query'
+                                : _searchCtrl.text.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        onChanged: (value) {
-                          _searchCtrl.text = value;
-                          context.read<PlaylistStore>().setSearchQuery(value);
-                        },
-                      ),
                       const SizedBox(height: 12),
                       Expanded(
                         child: Consumer<PlaylistStore>(

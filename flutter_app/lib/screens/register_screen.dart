@@ -48,9 +48,71 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
+  Future<void> _editField({
+    required String title,
+    required TextEditingController controller,
+    bool obscure = false,
+    TextInputType? keyboardType,
+  }) async {
+    final tempController = TextEditingController(text: controller.text);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: tempController,
+            autofocus: true,
+            obscureText: obscure,
+            keyboardType: keyboardType,
+            decoration: InputDecoration(labelText: title),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                tempController.text,
+              ),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    tempController.dispose();
+    if (value == null || !mounted) return;
+    setState(() {
+      controller.text = value.trimRight();
+    });
+  }
+
   Future<void> _submitRegister() async {
     final auth = context.read<AuthStore>();
-    if (!_registerFormKey.currentState!.validate()) return;
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+    if (!directionalNavigation) {
+      if (!_registerFormKey.currentState!.validate()) return;
+    } else {
+      final email = _emailCtrl.text.trim();
+      final password = _passwordCtrl.text;
+      final confirm = _confirmCtrl.text;
+      if (email.isEmpty || !email.contains('@')) {
+        setState(() => _error = 'Enter a valid email');
+        return;
+      }
+      if (password.length < 8) {
+        setState(() => _error = 'Password must be at least 8 characters');
+        return;
+      }
+      if (confirm != password) {
+        setState(() => _error = 'Passwords do not match');
+        return;
+      }
+    }
 
     setState(() {
       _error = null;
@@ -73,7 +135,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _verifyCode() async {
     final auth = context.read<AuthStore>();
-    if (!_verifyFormKey.currentState!.validate()) return;
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+    if (!directionalNavigation) {
+      if (!_verifyFormKey.currentState!.validate()) return;
+    } else {
+      final code = _codeCtrl.text.trim();
+      if (!RegExp(r'^\d{4}$').hasMatch(code)) {
+        setState(() => _error = 'Enter the 4-digit code');
+        return;
+      }
+    }
 
     setState(() {
       _error = null;
@@ -119,6 +191,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final auth = context.watch<AuthStore>();
     final theme = Theme.of(context);
     final viewInsets = MediaQuery.viewInsetsOf(context);
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Create account')),
@@ -167,63 +241,122 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
-                                    TextFormField(
-                                      controller: _emailCtrl,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Email',
-                                        prefixIcon: Icon(Icons.alternate_email),
-                                      ),
-                                      keyboardType: TextInputType.emailAddress,
-                                      validator: (value) {
-                                        final v = value?.trim() ?? '';
-                                        if (v.isEmpty) {
-                                          return 'Required';
-                                        }
-                                        if (!v.contains('@')) {
-                                          return 'Enter a valid email';
-                                        }
-                                        return null;
-                                      },
-                                    ),
-                                    const SizedBox(height: 12),
-                                    TextFormField(
-                                      controller: _passwordCtrl,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Password',
-                                        prefixIcon: Icon(Icons.lock_outline),
-                                      ),
-                                      obscureText: true,
-                                      validator: (value) {
-                                        final v = value ?? '';
-                                        if (v.isEmpty) {
-                                          return 'Required';
-                                        }
-                                        if (v.length < 8) {
-                                          return 'At least 8 characters';
-                                        }
-                                        return null;
-                                      },
-                                    ),
-                                    const SizedBox(height: 12),
-                                    TextFormField(
-                                      controller: _confirmCtrl,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Confirm password',
-                                        prefixIcon: Icon(
-                                          Icons.verified_user_outlined,
+                                    if (!directionalNavigation)
+                                      TextFormField(
+                                        controller: _emailCtrl,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Email',
+                                          prefixIcon: Icon(
+                                            Icons.alternate_email,
+                                          ),
+                                        ),
+                                        keyboardType:
+                                            TextInputType.emailAddress,
+                                        validator: (value) {
+                                          final v = value?.trim() ?? '';
+                                          if (v.isEmpty) {
+                                            return 'Required';
+                                          }
+                                          if (!v.contains('@')) {
+                                            return 'Enter a valid email';
+                                          }
+                                          return null;
+                                        },
+                                      )
+                                    else
+                                      OutlinedButton.icon(
+                                        onPressed: auth.busy
+                                            ? null
+                                            : () => _editField(
+                                                title: 'Email',
+                                                controller: _emailCtrl,
+                                                keyboardType:
+                                                    TextInputType.emailAddress,
+                                              ),
+                                        icon: const Icon(Icons.alternate_email),
+                                        label: Text(
+                                          _emailCtrl.text.trim().isEmpty
+                                              ? 'Set email'
+                                              : _emailCtrl.text.trim(),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                      obscureText: true,
-                                      validator: (value) {
-                                        if (value == null || value.isEmpty) {
-                                          return 'Required';
-                                        }
-                                        if (value != _passwordCtrl.text) {
-                                          return 'Passwords do not match';
-                                        }
-                                        return null;
-                                      },
-                                    ),
+                                    const SizedBox(height: 12),
+                                    if (!directionalNavigation)
+                                      TextFormField(
+                                        controller: _passwordCtrl,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Password',
+                                          prefixIcon: Icon(Icons.lock_outline),
+                                        ),
+                                        obscureText: true,
+                                        validator: (value) {
+                                          final v = value ?? '';
+                                          if (v.isEmpty) {
+                                            return 'Required';
+                                          }
+                                          if (v.length < 8) {
+                                            return 'At least 8 characters';
+                                          }
+                                          return null;
+                                        },
+                                      )
+                                    else
+                                      OutlinedButton.icon(
+                                        onPressed: auth.busy
+                                            ? null
+                                            : () => _editField(
+                                                title: 'Password',
+                                                controller: _passwordCtrl,
+                                                obscure: true,
+                                              ),
+                                        icon: const Icon(Icons.lock_outline),
+                                        label: Text(
+                                          _passwordCtrl.text.isEmpty
+                                              ? 'Set password'
+                                              : 'Password set',
+                                        ),
+                                      ),
+                                    const SizedBox(height: 12),
+                                    if (!directionalNavigation)
+                                      TextFormField(
+                                        controller: _confirmCtrl,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Confirm password',
+                                          prefixIcon: Icon(
+                                            Icons.verified_user_outlined,
+                                          ),
+                                        ),
+                                        obscureText: true,
+                                        validator: (value) {
+                                          if (value == null || value.isEmpty) {
+                                            return 'Required';
+                                          }
+                                          if (value != _passwordCtrl.text) {
+                                            return 'Passwords do not match';
+                                          }
+                                          return null;
+                                        },
+                                      )
+                                    else
+                                      OutlinedButton.icon(
+                                        onPressed: auth.busy
+                                            ? null
+                                            : () => _editField(
+                                                title: 'Confirm password',
+                                                controller: _confirmCtrl,
+                                                obscure: true,
+                                              ),
+                                        icon: const Icon(
+                                          Icons.verified_user_outlined,
+                                        ),
+                                        label: Text(
+                                          _confirmCtrl.text.isEmpty
+                                              ? 'Confirm password'
+                                              : 'Confirmation set',
+                                        ),
+                                      ),
                                     const SizedBox(height: 18),
                                     FilledButton(
                                       onPressed: auth.busy
@@ -258,23 +391,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 12),
-                                    TextFormField(
-                                      controller: _codeCtrl,
-                                      decoration: const InputDecoration(
-                                        labelText: '4-digit code',
-                                        prefixIcon: Icon(
+                                    if (!directionalNavigation)
+                                      TextFormField(
+                                        controller: _codeCtrl,
+                                        decoration: const InputDecoration(
+                                          labelText: '4-digit code',
+                                          prefixIcon: Icon(
+                                            Icons.verified_user_outlined,
+                                          ),
+                                        ),
+                                        keyboardType: TextInputType.number,
+                                        validator: (value) {
+                                          final v = (value ?? '').trim();
+                                          if (!RegExp(
+                                            r'^\d{4}$',
+                                          ).hasMatch(v)) {
+                                            return 'Enter the 4-digit code';
+                                          }
+                                          return null;
+                                        },
+                                      )
+                                    else
+                                      OutlinedButton.icon(
+                                        onPressed: auth.busy
+                                            ? null
+                                            : () => _editField(
+                                                title: '4-digit code',
+                                                controller: _codeCtrl,
+                                                keyboardType:
+                                                    TextInputType.number,
+                                              ),
+                                        icon: const Icon(
                                           Icons.verified_user_outlined,
                                         ),
+                                        label: Text(
+                                          _codeCtrl.text.trim().isEmpty
+                                              ? 'Enter 4-digit code'
+                                              : _codeCtrl.text.trim(),
+                                        ),
                                       ),
-                                      keyboardType: TextInputType.number,
-                                      validator: (value) {
-                                        final v = (value ?? '').trim();
-                                        if (!RegExp(r'^\d{4}$').hasMatch(v)) {
-                                          return 'Enter the 4-digit code';
-                                        }
-                                        return null;
-                                      },
-                                    ),
                                     const SizedBox(height: 18),
                                     FilledButton(
                                       onPressed: auth.busy ? null : _verifyCode,

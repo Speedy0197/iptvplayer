@@ -89,10 +89,95 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
     super.dispose();
   }
 
+  Future<void> _editField({
+    required String title,
+    required TextEditingController controller,
+    bool obscure = false,
+    TextInputType? keyboardType,
+  }) async {
+    final tempController = TextEditingController(text: controller.text);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: tempController,
+            autofocus: true,
+            obscureText: obscure,
+            keyboardType: keyboardType,
+            decoration: InputDecoration(labelText: title),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                tempController.text,
+              ),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    tempController.dispose();
+    if (value == null || !mounted) return;
+    setState(() {
+      controller.text = value.trimRight();
+    });
+  }
+
+  Widget _buildEditableField({
+    required bool directionalNavigation,
+    required TextEditingController controller,
+    required String label,
+    IconData? icon,
+    String? hintText,
+    bool obscureText = false,
+    TextInputType? keyboardType,
+    TextInputAction? textInputAction,
+  }) {
+    if (!directionalNavigation) {
+      return TextField(
+        controller: controller,
+        decoration: InputDecoration(labelText: label, hintText: hintText),
+        obscureText: obscureText,
+        keyboardType: keyboardType,
+        textInputAction: textInputAction,
+      );
+    }
+
+    final displayText = controller.text.trim();
+    return OutlinedButton.icon(
+      onPressed: submitting
+          ? null
+          : () => _editField(
+              title: label,
+              controller: controller,
+              obscure: obscureText,
+              keyboardType: keyboardType,
+            ),
+      icon: Icon(icon ?? Icons.edit_outlined),
+      label: Text(
+        displayText.isEmpty
+            ? 'Set $label'
+            : (obscureText ? '$label set' : displayText),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final isSmallDevice = media.size.width < 640;
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
 
     return Dialog(
       insetPadding: isSmallDevice
@@ -159,9 +244,11 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                           },
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  _buildEditableField(
+                    directionalNavigation: directionalNavigation,
                     controller: nameCtrl,
-                    decoration: const InputDecoration(labelText: 'Name'),
+                    label: 'Name',
+                    icon: Icons.badge_outlined,
                     textInputAction: TextInputAction.next,
                   ),
                   const SizedBox(height: 8),
@@ -188,11 +275,12 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                         ),
                         const SizedBox(height: 12),
                         if (m3uSource == 'url')
-                          TextField(
+                          _buildEditableField(
+                            directionalNavigation: directionalNavigation,
                             controller: m3uUrlCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'M3U URL',
-                            ),
+                            label: 'M3U URL',
+                            icon: Icons.link,
+                            keyboardType: TextInputType.url,
                           )
                         else ...[
                           OutlinedButton.icon(
@@ -263,28 +351,29 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                       ],
                     )
                   else if (selectedType == 'xtream') ...[
-                    TextField(
+                    _buildEditableField(
+                      directionalNavigation: directionalNavigation,
                       controller: xtreamServerCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Xtream server URL',
-                        hintText: 'http://provider.example.com:8080',
-                      ),
+                      label: 'Xtream server URL',
+                      icon: Icons.dns_outlined,
+                      hintText: 'http://provider.example.com:8080',
+                      keyboardType: TextInputType.url,
                     ),
                     const SizedBox(height: 8),
-                    TextField(
+                    _buildEditableField(
+                      directionalNavigation: directionalNavigation,
                       controller: xtreamUserCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Xtream username',
-                      ),
+                      label: 'Xtream username',
+                      icon: Icons.person_outline,
                     ),
                     const SizedBox(height: 8),
-                    TextField(
+                    _buildEditableField(
+                      directionalNavigation: directionalNavigation,
                       controller: xtreamPassCtrl,
-                      decoration: InputDecoration(
-                        labelText: widget.editing == null
-                            ? 'Xtream password'
-                            : 'Xtream password (optional)',
-                      ),
+                      label: widget.editing == null
+                          ? 'Xtream password'
+                          : 'Xtream password (optional)',
+                      icon: Icons.lock_outline,
                       obscureText: true,
                     ),
                   ] else ...[
@@ -314,26 +403,30 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                         ),
                       ),
                     const SizedBox(height: 8),
-                    TextField(
+                    _buildEditableField(
+                      directionalNavigation: directionalNavigation,
                       controller: vuplusIpCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'VU+ IP / host',
-                      ),
+                      label: 'VU+ IP / host',
+                      icon: Icons.router_outlined,
                     ),
                     const SizedBox(height: 8),
-                    TextField(
+                    _buildEditableField(
+                      directionalNavigation: directionalNavigation,
                       controller: vuplusPortCtrl,
-                      decoration: const InputDecoration(labelText: 'VU+ port'),
+                      label: 'VU+ port',
+                      icon: Icons.numbers,
+                      keyboardType: TextInputType.number,
                     ),
                   ],
                   if (selectedType != 'vuplus') ...[
                     const SizedBox(height: 8),
-                    TextField(
+                    _buildEditableField(
+                      directionalNavigation: directionalNavigation,
                       controller: epgUrlCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'EPG XMLTV URL (optional)',
-                        hintText: 'https://example.com/epg.xml',
-                      ),
+                      label: 'EPG XMLTV URL (optional)',
+                      icon: Icons.tv_outlined,
+                      hintText: 'https://example.com/epg.xml',
+                      keyboardType: TextInputType.url,
                     ),
                   ],
                   if (error != null)
