@@ -49,7 +49,28 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _submit() async {
     final auth = context.read<AuthStore>();
-    if (!_formKey.currentState!.validate()) return;
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+    if (!directionalNavigation) {
+      if (!_formKey.currentState!.validate()) return;
+    } else {
+      final email = _emailCtrl.text.trim();
+      final password = _passwordCtrl.text;
+      if (email.isEmpty || !email.contains('@')) {
+        setState(() {
+          _error = 'Enter a valid email';
+          _showVerifyAction = false;
+        });
+        return;
+      }
+      if (password.isEmpty) {
+        setState(() {
+          _error = 'Password is required';
+          _showVerifyAction = false;
+        });
+        return;
+      }
+    }
 
     setState(() {
       _error = null;
@@ -69,6 +90,48 @@ class _LoginScreenState extends State<LoginScreen> {
         _showVerifyAction = false;
       });
     }
+  }
+
+  Future<void> _editCredentialField({
+    required String title,
+    required TextEditingController controller,
+    required bool obscure,
+    TextInputType? keyboardType,
+  }) async {
+    final tempController = TextEditingController(text: controller.text);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: tempController,
+            autofocus: true,
+            obscureText: obscure,
+            keyboardType: keyboardType,
+            decoration: InputDecoration(labelText: title),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                tempController.text,
+              ),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    tempController.dispose();
+    if (value == null) return;
+    setState(() {
+      controller.text = value.trimRight();
+    });
   }
 
   Future<void> _startTvLogin() async {
@@ -181,6 +244,9 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLoginForm(ThemeData theme, AuthStore auth) {
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+
     return Form(
       key: _formKey,
       child: Column(
@@ -207,35 +273,70 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          TextFormField(
-            controller: _emailCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Email',
-              prefixIcon: Icon(Icons.alternate_email),
+          if (!directionalNavigation) ...[
+            TextFormField(
+              controller: _emailCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                prefixIcon: Icon(Icons.alternate_email),
+              ),
+              keyboardType: TextInputType.emailAddress,
+              validator: (value) {
+                final v = value?.trim() ?? '';
+                if (v.isEmpty) {
+                  return 'Required';
+                }
+                if (!v.contains('@')) {
+                  return 'Enter a valid email';
+                }
+                return null;
+              },
             ),
-            keyboardType: TextInputType.emailAddress,
-            validator: (value) {
-              final v = value?.trim() ?? '';
-              if (v.isEmpty) {
-                return 'Required';
-              }
-              if (!v.contains('@')) {
-                return 'Enter a valid email';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _passwordCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Password',
-              prefixIcon: Icon(Icons.lock_outline),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _passwordCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                prefixIcon: Icon(Icons.lock_outline),
+              ),
+              obscureText: true,
+              validator: (value) =>
+                  value == null || value.isEmpty ? 'Required' : null,
             ),
-            obscureText: true,
-            validator: (value) =>
-                value == null || value.isEmpty ? 'Required' : null,
-          ),
+          ] else ...[
+            OutlinedButton.icon(
+              onPressed: auth.busy
+                  ? null
+                  : () => _editCredentialField(
+                      title: 'Email',
+                      controller: _emailCtrl,
+                      obscure: false,
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+              icon: const Icon(Icons.alternate_email),
+              label: Text(
+                _emailCtrl.text.trim().isEmpty
+                    ? 'Set email'
+                    : _emailCtrl.text.trim(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: auth.busy
+                  ? null
+                  : () => _editCredentialField(
+                      title: 'Password',
+                      controller: _passwordCtrl,
+                      obscure: true,
+                    ),
+              icon: const Icon(Icons.lock_outline),
+              label: Text(
+                _passwordCtrl.text.isEmpty ? 'Set password' : 'Password set',
+              ),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 12),
             Container(
