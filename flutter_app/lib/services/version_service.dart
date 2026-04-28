@@ -88,6 +88,8 @@ class _ForceUpdateDialog extends StatefulWidget {
 class _ForceUpdateDialogState extends State<_ForceUpdateDialog> {
   _UpdateState _state = _UpdateState.idle;
   double _progress = 0;
+  String _statusText = 'Waiting to start update';
+  String? _errorText;
 
   Future<void> _startUpdate() async {
     // iOS: just open TestFlight — no download needed.
@@ -99,20 +101,47 @@ class _ForceUpdateDialogState extends State<_ForceUpdateDialog> {
     setState(() {
       _state = _UpdateState.downloading;
       _progress = 0;
+      _errorText = null;
+      _statusText = 'Starting update';
     });
 
     final path = await UpdateService.download(
       UpdateService.platformDownloadUrl,
       onProgress: (p) => setState(() => _progress = p),
+      onStatus: (status) {
+        if (!mounted) return;
+        setState(() => _statusText = status);
+      },
     );
 
     if (path == null) {
-      setState(() => _state = _UpdateState.error);
+      setState(() {
+        _state = _UpdateState.error;
+        _errorText ??= _statusText;
+      });
       return;
     }
 
-    setState(() => _state = _UpdateState.installing);
-    await UpdateService.install(path);
+    setState(() {
+      _state = _UpdateState.installing;
+      _statusText = 'Starting installer';
+    });
+
+    try {
+      await UpdateService.install(
+        path,
+        onStatus: (status) {
+          if (!mounted) return;
+          setState(() => _statusText = status);
+        },
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _state = _UpdateState.error;
+        _errorText = error.toString();
+      });
+    }
   }
 
   @override
@@ -152,6 +181,11 @@ class _ForceUpdateDialogState extends State<_ForceUpdateDialog> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
+            const SizedBox(height: 8),
+            Text(
+              _statusText,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             if (_state == _UpdateState.installing) ...[
               const SizedBox(height: 16),
               const LinearProgressIndicator(),
@@ -164,7 +198,7 @@ class _ForceUpdateDialogState extends State<_ForceUpdateDialog> {
             if (_state == _UpdateState.error) ...[
               const SizedBox(height: 12),
               Text(
-                'Download failed. Please try again.',
+                _errorText ?? 'Update failed. Please try again.',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.error,
                   fontSize: 13,

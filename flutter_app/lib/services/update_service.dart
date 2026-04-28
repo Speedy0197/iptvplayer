@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
 
 typedef ProgressCallback = void Function(double progress);
+typedef StatusCallback = void Function(String status);
 
 class UpdateService {
   static const Duration _downloadChunkTimeout = Duration(seconds: 30);
@@ -31,47 +32,84 @@ class UpdateService {
   static Future<String?> download(
     String url, {
     required ProgressCallback onProgress,
+    StatusCallback? onStatus,
   }) async {
-    return _downloadInternal(url, onProgress: onProgress).timeout(
+    return _downloadInternal(
+      url,
+      onProgress: onProgress,
+      onStatus: onStatus,
+    ).timeout(
       _downloadOverallTimeout,
-      onTimeout: () => null,
+      onTimeout: () {
+        onStatus?.call('Download timed out after ${_downloadOverallTimeout.inMinutes} minutes');
+        return null;
+      },
     );
   }
 
   static Future<String?> _downloadInternal(
     String url, {
     required ProgressCallback onProgress,
+    StatusCallback? onStatus,
   }) async {
     final client = http.Client();
     try {
+      onStatus?.call('Requesting update package');
       final response =
           await client.send(http.Request('GET', Uri.parse(url)));
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        onStatus?.call('Download failed: HTTP ${response.statusCode}');
+        return null;
+      }
 
       final total = response.contentLength ?? 0;
       var received = 0;
+      onStatus?.call(
+        total > 0 ? 'Downloading package (${_formatBytes(total)})' : 'Downloading package',
+      );
 
       final dir = await getTemporaryDirectory();
       final fileName = url.split('/').last;
       final file = File('${dir.path}/$fileName');
-      final sink = file.openWrite();
+      await file.parent.create(recursive: true);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      final output = await file.open(mode: FileMode.writeOnly);
 
-      await for (final chunk in response.stream.timeout(_downloadChunkTimeout)) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (total > 0) {
-          final progress = (received / total).clamp(0.0, 1.0).toDouble();
-          onProgress(progress);
+      try {
+        await for (final chunk in response.stream.timeout(_downloadChunkTimeout)) {
+          await output.writeFrom(chunk);
+          received += chunk.length;
+          if (total > 0) {
+            final progress = (received / total).clamp(0.0, 1.0).toDouble();
+            onProgress(progress);
+            onStatus?.call(
+              'Received ${_formatBytes(received)} of ${_formatBytes(total)}',
+            );
+            if (received >= total) {
+              break;
+            }
+          } else {
+            onStatus?.call('Received ${_formatBytes(received)}');
+          }
         }
+
+        onStatus?.call('Flushing downloaded file');
+        await output.flush();
+      } finally {
+        onStatus?.call('Closing downloaded file');
+        await output.close();
       }
 
-      await sink.flush();
-      await sink.close();
       onProgress(1.0);
+      onStatus?.call('Download complete: ${file.path}');
       return file.path;
     } on TimeoutException {
+      onStatus?.call('Download stalled waiting for the next chunk');
       return null;
-    } catch (_) {
+    } catch (error) {
+      onStatus?.call('Download failed: $error');
       return null;
     } finally {
       client.close();
@@ -79,13 +117,16 @@ class UpdateService {
   }
 
   /// Triggers the platform-native install flow for a downloaded file.
-  static Future<void> install(String filePath) async {
+  static Future<void> install(String filePath, {StatusCallback? onStatus}) async {
     if (Platform.isAndroid) {
+      onStatus?.call('Opening Android installer');
       await OpenFilex.open(filePath);
     } else if (Platform.isMacOS) {
       // Mount the DMG and close the app so the user can replace it cleanly.
+      onStatus?.call('Opening downloaded DMG');
       final result = await Process.run('open', [filePath]);
       if (result.exitCode != 0) {
+        onStatus?.call('Failed to open DMG: ${(result.stderr ?? result.stdout).toString()}');
         throw ProcessException(
           'open',
           [filePath],
@@ -93,12 +134,23 @@ class UpdateService {
           result.exitCode,
         );
       }
+      onStatus?.call('DMG opened successfully, closing app');
       exit(0);
     } else if (Platform.isWindows) {
       // Launch the installer visibly so users can confirm/update via the wizard.
+      onStatus?.call('Opening Windows installer');
       await OpenFilex.open(filePath);
       exit(0);
     }
+  }
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   /// Opens the TestFlight app directly (iOS), falling back to Safari if not installed.
