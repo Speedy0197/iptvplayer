@@ -10,9 +10,9 @@
     </linearGradient>
   </defs>
 
-  <rect x="72" y="72" width="880" height="880" rx="210" fill="url(#bgA)"/>
-  <rect x="240" y="252" width="120" height="520" rx="56" fill="url(#accentA)"/>
-  <rect x="398" y="252" width="340" height="120" rx="56" fill="url(#accentA)"/>
-  <rect x="398" y="452" width="250" height="120" rx="56" fill="url(#accentA)"/>
-  <polygon points="600,652 790,760 600,868" fill="url(#accentA)"/>
+  <rect x="36" y="36" width="952" height="952" rx="228" fill="url(#bgA)"/>
+  <rect x="196" y="216" width="136" height="592" rx="64" fill="url(#accentA)"/>
+  <rect x="376" y="216" width="404" height="136" rx="64" fill="url(#accentA)"/>
+  <rect x="376" y="442" width="300" height="136" rx="64" fill="url(#accentA)"/>
+  <polygon points="612,668 844,800 612,932" fill="url(#accentA)"/>
 </svg>

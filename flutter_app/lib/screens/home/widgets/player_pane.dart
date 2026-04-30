@@ -75,9 +75,15 @@ class PlayerPane extends StatelessWidget {
     final now = DateTime.now();
     final allEpg = store.epgEntries;
     // Find the currently airing entry (or the next upcoming if none is live)
-    final nowIndex = allEpg.indexWhere((e) => e.startTime.isBefore(now) && e.endTime.isAfter(now));
-    final startIndex = nowIndex >= 0 ? nowIndex : allEpg.indexWhere((e) => e.startTime.isAfter(now));
-    final epgToShow = startIndex >= 0 ? allEpg.skip(startIndex).take(5).toList() : allEpg.take(5).toList();
+    final nowIndex = allEpg.indexWhere(
+      (e) => e.startTime.isBefore(now) && e.endTime.isAfter(now),
+    );
+    final startIndex = nowIndex >= 0
+        ? nowIndex
+        : allEpg.indexWhere((e) => e.startTime.isAfter(now));
+    final epgToShow = startIndex >= 0
+        ? allEpg.skip(startIndex).take(5).toList()
+        : allEpg.take(5).toList();
 
     if (isCompactLayout) {
       return Card(
@@ -110,29 +116,68 @@ class PlayerPane extends StatelessWidget {
     }
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ...headerContent,
-            Expanded(
-              child: store.loadingEpg
-                  ? const Center(child: CircularProgressIndicator())
-                  : store.epgSourceMissing
-                  ? const Text('No EPG source configured for this channel')
-                  : epgToShow.isEmpty
-                  ? const Text('No EPG data available')
-                  : ListView.builder(
-                      itemCount: epgToShow.length,
-                      itemBuilder: (context, i) {
-                        final e = epgToShow[i];
-                        return _buildEpgEntryCard(context, e);
-                      },
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Ensure we have valid constraints; fallback to reasonable defaults if not
+          final availableWidth = constraints.maxWidth > 0
+              ? constraints.maxWidth
+              : 500;
+          final maxPlayerWidth = (availableWidth * 0.95).clamp(200.0, 1500.0);
+          final playerHeight = (maxPlayerWidth / 16 * 9).clamp(160.0, 400.0);
+
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: maxPlayerWidth,
+                  height: playerHeight,
+                  child: ChannelPlayer(
+                    streamUrl: channel.streamUrl,
+                    isActiveRecording: store.isChannelActivelyRecording(
+                      channel,
                     ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  channel.name,
+                  style: Theme.of(context).textTheme.titleLarge,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  channel.groupName,
+                  style: Theme.of(context).textTheme.bodySmall,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'EPG',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: store.loadingEpg
+                      ? const Center(child: CircularProgressIndicator())
+                      : store.epgSourceMissing
+                      ? const Text('No EPG source configured for this channel')
+                      : epgToShow.isEmpty
+                      ? const Text('No EPG data available')
+                      : ListView.builder(
+                          itemCount: epgToShow.length,
+                          itemBuilder: (context, i) {
+                            final e = epgToShow[i];
+                            return _buildEpgEntryCard(context, e);
+                          },
+                        ),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -196,6 +241,75 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
     }
   }
 
+  Future<void> _saveRecording() async {
+    if (_savingRecording) return;
+    setState(() {
+      _savingRecording = true;
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.onRecord();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Recording timer added')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not add timer: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingRecording = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildRecordAction(BuildContext context) {
+    if (widget.isTimerScheduled) {
+      return Tooltip(
+        message: 'Recording scheduled',
+        child: _removingTimer
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: Padding(
+                  padding: EdgeInsets.all(2),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : InkWell(
+                onTap: _removeTimer,
+                child: Icon(
+                  Icons.check_circle,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+      );
+    }
+
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: _savingRecording
+          ? const Padding(
+              padding: EdgeInsets.all(6),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : IconButton(
+              padding: EdgeInsets.zero,
+              iconSize: 20,
+              tooltip: widget.hasEnded ? 'Program ended' : 'Record',
+              onPressed: widget.hasEnded ? null : _saveRecording,
+              color: widget.hasEnded ? null : Colors.red,
+              icon: const Icon(Icons.fiber_manual_record),
+            ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -209,99 +323,65 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
             _expanded = value;
           });
         },
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                widget.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              widget.timeRange,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            if (widget.canRecord) ...[
-              const SizedBox(width: 4),
-              if (widget.isTimerScheduled)
-                Tooltip(
-                  message: 'Recording scheduled',
-                  child: _removingTimer
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: Padding(
-                            padding: EdgeInsets.all(2),
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : InkWell(
-                          onTap: _removeTimer,
-                          child: Icon(
-                            Icons.check_circle,
-                            size: 20,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
+        title: LayoutBuilder(
+          builder: (context, constraints) {
+            final controls = widget.canRecord
+                ? _buildRecordAction(context)
+                : const SizedBox.shrink();
+            final isNarrow = constraints.maxWidth < 420;
+
+            if (isNarrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.timeRange,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium,
                         ),
-                )
-              else
-                SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: _savingRecording
-                      ? const Padding(
-                          padding: EdgeInsets.all(6),
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : IconButton(
-                          padding: EdgeInsets.zero,
-                          iconSize: 20,
-                          tooltip: widget.hasEnded ? 'Program ended' : 'Record',
-                          onPressed: widget.hasEnded
-                              ? null
-                              : () async {
-                                  if (_savingRecording) return;
-                                  setState(() {
-                                    _savingRecording = true;
-                                  });
-                                  final messenger = ScaffoldMessenger.of(
-                                    context,
-                                  );
-                                  try {
-                                    await widget.onRecord();
-                                    if (!mounted) return;
-                                    messenger.showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Recording timer added'),
-                                      ),
-                                    );
-                                  } catch (e) {
-                                    if (!mounted) return;
-                                    messenger.showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Could not add timer: $e',
-                                        ),
-                                      ),
-                                    );
-                                  } finally {
-                                    if (mounted) {
-                                      setState(() {
-                                        _savingRecording = false;
-                                      });
-                                    }
-                                  }
-                                },
-                          color: widget.hasEnded
-                              ? null
-                              : Colors.red,
-                          icon: const Icon(Icons.fiber_manual_record),
-                        ),
+                      ),
+                      if (widget.canRecord) ...[
+                        const SizedBox(width: 4),
+                        controls,
+                      ],
+                    ],
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-            ],
-          ],
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    widget.timeRange,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                if (widget.canRecord) ...[const SizedBox(width: 4), controls],
+              ],
+            );
+          },
         ),
         subtitle: _expanded
             ? null

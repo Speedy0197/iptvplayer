@@ -38,6 +38,13 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Disable Impeller/Vulkan renderer on Android TV (NVIDIA Shield runs
+             Android < 33). Impeller uses ImageReader-based SurfaceProducer which
+             requires fence synchronisation unavailable before API 33, causing
+             black video output. Skia uses SurfaceTexture which works on all APIs. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

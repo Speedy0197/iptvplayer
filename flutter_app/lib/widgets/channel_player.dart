@@ -30,6 +30,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
   late Player _player;
   late VideoController _controller;
+  final _videoKey = GlobalKey<VideoState>();
 
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _bufferingSub;
@@ -195,11 +196,10 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     try {
       // First try to continue immediately without reopening the stream.
       await _player.play();
-      if (
-          await _positionAdvancesWithin(
-            baseline: resumeAt,
-            timeout: const Duration(seconds: 2),
-          )) {
+      if (await _positionAdvancesWithin(
+        baseline: resumeAt,
+        timeout: const Duration(seconds: 2),
+      )) {
         return true;
       }
 
@@ -294,7 +294,30 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         bufferSize: 64 * 1024 * 1024,
       ),
     );
+
+    // Force software video decoding at the libmpv level on Android BEFORE
+    // creating VideoController. NVIDIA Tegra and older Android TV chips cannot
+    // synchronize ImageTextureEntry surfaces properly. Software decoding writes
+    // plain YUV/RGB frames that pixel-buffer surfaces can display.
+    if (Platform.isAndroid) {
+      try {
+        final nativePlayer = _player.platform;
+        if (nativePlayer is NativePlayer) {
+          debugPrint('Setting hwdec=no for Android');
+          nativePlayer.setProperty('hwdec', 'no');
+          debugPrint('hwdec property set successfully');
+        } else {
+          debugPrint(
+            'Player platform is not NativePlayer: ${nativePlayer.runtimeType}',
+          );
+        }
+      } catch (e) {
+        debugPrint('Failed to configure hwdec: $e');
+      }
+    }
+
     _controller = VideoController(_player);
+
     _bindPlayerStreams();
 
     // If position hasn't advanced for a while while buffering/stalled and
@@ -315,7 +338,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
           duration > Duration.zero &&
           pos > Duration.zero &&
           remaining <= _preemptiveEdgeThreshold;
-      final canPreemptNow = DateTime.now().difference(_lastPreemptiveResumeAt) >=
+      final canPreemptNow =
+          DateTime.now().difference(_lastPreemptiveResumeAt) >=
           _preemptiveResumeCooldown;
       if (isPlaying && !isBuffering && nearKnownEdge && canPreemptNow) {
         _lastPreemptiveResumeAt = DateTime.now();
@@ -461,9 +485,13 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     super.dispose();
   }
 
+  void _enterFullscreen() {
+    _videoKey.currentState?.enterFullscreen();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
+    final playerWidget = ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: AspectRatio(
         aspectRatio: 16 / 9,
@@ -481,6 +509,61 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         ),
       ),
     );
+
+    // On non-Android platforms just return the player as-is.
+    if (!Platform.isAndroid) return playerWidget;
+
+    // On Android TV: overlay a focusable fullscreen button in the corner so
+    // the user can reach it with the D-pad and press OK to go fullscreen.
+    return Stack(
+      children: [
+        playerWidget,
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: Focus(
+            autofocus: false,
+            child: Builder(
+              builder: (context) {
+                final hasFocus = Focus.of(context).hasFocus;
+                return Tooltip(
+                  message: 'Fullscreen',
+                  child: InkWell(
+                    focusColor: Colors.white24,
+                    onTap: _enterFullscreen,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: hasFocus ? Colors.white30 : Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                        border: hasFocus
+                            ? Border.all(color: Colors.white, width: 2)
+                            : null,
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.fullscreen, color: Colors.white, size: 16),
+                          SizedBox(width: 4),
+                          Text(
+                            'OK',
+                            style: TextStyle(color: Colors.white, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildPlayer() {
@@ -488,24 +571,28 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       return ColoredBox(
         color: Colors.black,
         child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.redAccent),
-                const SizedBox(height: 8),
-                Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 10),
-                FilledButton.tonal(
-                  onPressed: () => _openCurrentStream(resetAttempts: true),
-                  child: const Text('Retry'),
-                ),
-              ],
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.redAccent),
+                  const SizedBox(height: 8),
+                  Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.white70),
+                    textAlign: TextAlign.center,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.tonal(
+                    onPressed: () => _openCurrentStream(resetAttempts: true),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -513,6 +600,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     }
 
     return Video(
+      key: _videoKey,
       controller: _controller,
       controls: AdaptiveVideoControls,
       fit: BoxFit.contain,

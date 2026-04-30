@@ -7,17 +7,20 @@ class SearchChannelResultTile extends StatelessWidget {
   final Channel channel;
   final String playlistName;
   final VoidCallback onTap;
+  final FocusNode? focusNode;
 
   const SearchChannelResultTile({
     required super.key,
     required this.channel,
     required this.playlistName,
     required this.onTap,
+    this.focusNode,
   });
 
   @override
   Widget build(BuildContext context) {
     return ListTile(
+      focusNode: focusNode,
       dense: true,
       leading: ChannelLogoAvatar(
         logoUrl: channel.logoUrl,

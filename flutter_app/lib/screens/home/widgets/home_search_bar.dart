@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../config/device_utils.dart';
 import '../../../services/playlist_store.dart';
 
 class HomeSearchBar extends StatelessWidget {
@@ -20,8 +21,7 @@ class HomeSearchBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final navigationMode = MediaQuery.maybeNavigationModeOf(context);
-    final directionalNavigation = navigationMode == NavigationMode.directional;
+    final directionalNavigation = isAndroidTv(context);
 
     Widget buildSearchButton({required Color backgroundColor}) {
       return Semantics(

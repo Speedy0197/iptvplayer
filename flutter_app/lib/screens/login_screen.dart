@@ -33,10 +33,20 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _tvLoginUrl;
   DateTime? _tvExpiresAt;
   Timer? _tvPollTimer;
+  bool _didStartTvLogin = false;
 
   @override
   void initState() {
     super.initState();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didStartTvLogin || !_isAndroidTv(context)) {
+      return;
+    }
+    _didStartTvLogin = true;
     unawaited(_startTvLogin());
   }
 
@@ -48,25 +58,25 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  bool _isTvInputMode(BuildContext context) {
+  bool _isAndroidTv(BuildContext context) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+
     final directionalNavigation =
         MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
     if (directionalNavigation) {
       return true;
     }
 
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      final size = MediaQuery.sizeOf(context);
-      // Fallback for Android TV devices that may not report directional mode.
-      return size.width >= 960 || size.height >= 960;
-    }
-
-    return false;
+    final size = MediaQuery.sizeOf(context);
+    // Fallback for Android TV devices that may not report directional mode.
+    return size.width >= 960 || size.height >= 960;
   }
 
   Future<void> _submit() async {
     final auth = context.read<AuthStore>();
-    final tvInputMode = _isTvInputMode(context);
+    final tvInputMode = _isAndroidTv(context);
     if (!tvInputMode) {
       if (!_formKey.currentState!.validate()) return;
     } else {
@@ -280,7 +290,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLoginForm(ThemeData theme, AuthStore auth) {
-    final tvInputMode = _isTvInputMode(context);
+    final tvInputMode = _isAndroidTv(context);
 
     return Form(
       key: _formKey,
@@ -303,9 +313,7 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 4),
           Text(
             'Sign in to continue watching.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: Colors.white70,
-            ),
+            style: theme.textTheme.bodyMedium?.copyWith(color: Colors.white70),
           ),
           const SizedBox(height: 20),
           if (!tvInputMode) ...[
@@ -539,6 +547,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final auth = context.watch<AuthStore>();
     final theme = Theme.of(context);
     final viewInsets = MediaQuery.viewInsetsOf(context);
+    final isAndroidTv = _isAndroidTv(context);
 
     return Scaffold(
       body: Container(
@@ -572,11 +581,16 @@ class _LoginScreenState extends State<LoginScreen> {
                           padding: const EdgeInsets.all(24),
                           child: LayoutBuilder(
                             builder: (context, cardConstraints) {
+                              if (isAndroidTv) {
+                                return _buildTvLoginPanel(theme);
+                              }
+
                               final twoColumn = cardConstraints.maxWidth >= 760;
                               if (!twoColumn) {
                                 return Column(
                                   mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
                                   children: [
                                     _buildLoginForm(theme, auth),
                                     const SizedBox(height: 16),

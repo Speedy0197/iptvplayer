@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../models/models.dart';
 import '../../../services/playlist_store.dart';
@@ -19,21 +20,42 @@ class PlaylistManagementView extends StatelessWidget {
     required this.onDelete,
   });
 
+  bool _isAndroidTv(BuildContext context) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+
+    final directionalNavigation =
+        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
+    if (directionalNavigation) {
+      return true;
+    }
+
+    final size = MediaQuery.sizeOf(context);
+    return size.width >= 960 || size.height >= 960;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isAndroidTv = _isAndroidTv(context);
+
     return Card(
       child: Column(
         children: [
           ListTile(
             title: const Text('Manage Playlists'),
-            subtitle: const Text(
-              'Add, edit, refresh or delete playlist sources',
+            subtitle: Text(
+              isAndroidTv
+                  ? 'Refresh playlist sources'
+                  : 'Add, edit, refresh or delete playlist sources',
             ),
-            trailing: FilledButton.icon(
-              onPressed: onCreate,
-              icon: const Icon(Icons.add),
-              label: const Text('Add'),
-            ),
+            trailing: isAndroidTv
+                ? null
+                : FilledButton.icon(
+                    onPressed: onCreate,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add'),
+                  ),
           ),
           const Divider(height: 1),
           Expanded(
@@ -53,12 +75,13 @@ class PlaylistManagementView extends StatelessWidget {
                           trailing: Wrap(
                             spacing: 4,
                             children: [
-                              IconButton(
-                                onPressed: isRefreshing
-                                    ? null
-                                    : () => onEdit(p),
-                                icon: const Icon(Icons.edit_outlined),
-                              ),
+                              if (!isAndroidTv)
+                                IconButton(
+                                  onPressed: isRefreshing
+                                      ? null
+                                      : () => onEdit(p),
+                                  icon: const Icon(Icons.edit_outlined),
+                                ),
                               IconButton(
                                 onPressed: isRefreshing
                                     ? null
@@ -76,12 +99,13 @@ class PlaylistManagementView extends StatelessWidget {
                                       )
                                     : const Icon(Icons.refresh),
                               ),
-                              IconButton(
-                                onPressed: isRefreshing
-                                    ? null
-                                    : () => onDelete(p),
-                                icon: const Icon(Icons.delete_outline),
-                              ),
+                              if (!isAndroidTv)
+                                IconButton(
+                                  onPressed: isRefreshing
+                                      ? null
+                                      : () => onDelete(p),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
                             ],
                           ),
                         ),
