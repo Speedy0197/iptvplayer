@@ -122,6 +122,12 @@ class UpdateService {
       onStatus?.call('Opening Android installer');
       await OpenFilex.open(filePath);
     } else if (Platform.isMacOS) {
+      // Remove the quarantine attribute macOS adds to downloaded files.
+      // Without this, Gatekeeper blocks the app copied from the DMG because
+      // it inherits the quarantine flag and the app is not notarized.
+      onStatus?.call('Removing quarantine from downloaded DMG');
+      await Process.run('xattr', ['-d', 'com.apple.quarantine', filePath]);
+
       // Mount the DMG and close the app so the user can replace it cleanly.
       onStatus?.call('Opening downloaded DMG');
       final result = await Process.run('open', [filePath]);
