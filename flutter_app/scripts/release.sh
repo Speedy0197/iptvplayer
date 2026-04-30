@@ -30,6 +30,13 @@ Optional TestFlight upload (automatic if configured):
   - APPSTORE_API_ISSUER_ID
   - APPSTORE_API_PRIVATE_KEY or APPSTORE_API_PRIVATE_KEY_PATH
 
+Optional macOS Developer ID signing + notarization:
+  - MACOS_CODESIGN_IDENTITY (example: Developer ID Application: Your Name (TEAMID))
+  - APPLE_NOTARYTOOL_PROFILE (recommended), or:
+    - APPLE_ID
+    - APPLE_TEAM_ID
+    - APPLE_APP_PASSWORD
+
 Install create-dmg for the macOS DMG:
   brew install create-dmg
 EOF
@@ -40,6 +47,70 @@ require_cmd() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+NOTARY_AUTH_ARGS=()
+
+configure_notary_auth() {
+  if [[ -n "${APPLE_NOTARYTOOL_PROFILE:-}" ]]; then
+    NOTARY_AUTH_ARGS=(--keychain-profile "$APPLE_NOTARYTOOL_PROFILE")
+    return 0
+  fi
+
+  if [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+    NOTARY_AUTH_ARGS=(
+      --apple-id "$APPLE_ID"
+      --team-id "$APPLE_TEAM_ID"
+      --password "$APPLE_APP_PASSWORD"
+    )
+    return 0
+  fi
+
+  return 1
+}
+
+notarize_file() {
+  local file_path="$1"
+  local label="$2"
+
+  echo "Submitting $label for notarization..."
+  xcrun notarytool submit "$file_path" "${NOTARY_AUTH_ARGS[@]}" --wait
+}
+
+sign_and_notarize_app() {
+  local app_bundle="$1"
+
+  echo "Signing macOS app bundle with Developer ID identity..."
+  codesign --force --deep --options runtime --timestamp --sign "$MACOS_CODESIGN_IDENTITY" "$app_bundle"
+  codesign --verify --deep --strict --verbose=2 "$app_bundle"
+
+  local notary_tmp_dir
+  local app_zip
+  notary_tmp_dir="$(mktemp -d)"
+  app_zip="$notary_tmp_dir/StreamPilot.app.zip"
+
+  ditto -c -k --keepParent "$app_bundle" "$app_zip"
+  notarize_file "$app_zip" "macOS app bundle"
+
+  echo "Stapling notarization ticket to macOS app bundle..."
+  xcrun stapler staple -v "$app_bundle"
+  spctl --assess --type execute --verbose=4 "$app_bundle"
+
+  rm -rf "$notary_tmp_dir"
+}
+
+sign_and_notarize_dmg() {
+  local dmg_path="$1"
+
+  echo "Signing DMG with Developer ID identity..."
+  codesign --force --timestamp --sign "$MACOS_CODESIGN_IDENTITY" "$dmg_path"
+  codesign --verify --verbose=2 "$dmg_path"
+
+  notarize_file "$dmg_path" "macOS DMG"
+
+  echo "Stapling notarization ticket to DMG..."
+  xcrun stapler staple -v "$dmg_path"
+  spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_path"
 }
 
 upload_to_testflight_if_configured() {
@@ -182,6 +253,24 @@ require_cmd create-dmg
 require_cmd ditto
 require_cmd find
 
+MACOS_SIGNING_ENABLED=false
+if [[ -n "${MACOS_CODESIGN_IDENTITY:-}" ]]; then
+  MACOS_SIGNING_ENABLED=true
+  require_cmd codesign
+  require_cmd xcrun
+  require_cmd spctl
+
+  if ! configure_notary_auth; then
+    echo "MACOS_CODESIGN_IDENTITY is set, but notarization credentials are missing." >&2
+    echo "Set APPLE_NOTARYTOOL_PROFILE or APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD." >&2
+    exit 1
+  fi
+
+  echo "macOS signing/notarization enabled for release artifacts."
+else
+  echo "macOS signing/notarization disabled (MACOS_CODESIGN_IDENTITY not set)."
+fi
+
 cd "$REPO_DIR"
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -226,6 +315,10 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
   exit 1
 fi
 
+if [[ "$MACOS_SIGNING_ENABLED" == "true" ]]; then
+  sign_and_notarize_app "$APP_BUNDLE"
+fi
+
 echo "Creating DMG..."
 cp -R "$APP_BUNDLE" "$MACOS_STAGE_DIR/StreamPilot.app"
 create-dmg \
@@ -238,6 +331,10 @@ create-dmg \
   --app-drop-link 450 185 \
   "$DIST_DIR/streampilot-macos.dmg" \
   "$MACOS_STAGE_DIR/"
+
+if [[ "$MACOS_SIGNING_ENABLED" == "true" ]]; then
+  sign_and_notarize_dmg "$DIST_DIR/streampilot-macos.dmg"
+fi
 
 echo "Building iOS IPA..."
 flutter build ipa --release --build-name="$VERSION" --build-number="$BUILD_NUMBER"

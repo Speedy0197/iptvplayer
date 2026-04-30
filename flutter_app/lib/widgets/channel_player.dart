@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
+import '../config/device_utils.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -510,8 +512,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       ),
     );
 
-    // On non-Android platforms just return the player as-is.
-    if (!Platform.isAndroid) return playerWidget;
+    // On non-Android-TV platforms just return the player as-is.
+    if (!isAndroidTv(context)) return playerWidget;
 
     // On Android TV: overlay a focusable fullscreen button in the corner so
     // the user can reach it with the D-pad and press OK to go fullscreen.

@@ -585,33 +585,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 return _buildTvLoginPanel(theme);
                               }
 
-                              final twoColumn = cardConstraints.maxWidth >= 760;
-                              if (!twoColumn) {
-                                return Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    _buildLoginForm(theme, auth),
-                                    const SizedBox(height: 16),
-                                    const Divider(),
-                                    const SizedBox(height: 16),
-                                    _buildTvLoginPanel(theme),
-                                  ],
-                                );
-                              }
-
-                              return Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(child: _buildLoginForm(theme, auth)),
-                                  const SizedBox(width: 24),
-                                  SizedBox(
-                                    width: 320,
-                                    child: _buildTvLoginPanel(theme),
-                                  ),
-                                ],
-                              );
+                              return _buildLoginForm(theme, auth);
                             },
                           ),
                         ),
