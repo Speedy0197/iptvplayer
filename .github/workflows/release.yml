@@ -97,7 +97,7 @@ jobs:
           & $iscc /DAppVersion=$tag flutter_app\windows\installer\installer.iss
 
       - name: Attach installer to GitHub Release
-        run: gh release upload "${{ github.ref_name }}" flutter_app/installer_output/iptv-player-windows.exe --clobber
+        run: gh release upload "${{ github.ref_name }}" flutter_app/installer_output/streampilot-windows.exe --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

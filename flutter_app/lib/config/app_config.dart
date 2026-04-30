@@ -13,7 +13,7 @@ class AppConfig {
       'https://github.com/speedy0197/iptvplayer/releases/latest/download';
   static const String androidDownloadUrl = '$_releaseBase/streampilot-android.apk';
   static const String macosDownloadUrl = '$_releaseBase/streampilot-macos.dmg';
-  static const String windowsDownloadUrl = '$_releaseBase/iptv-player-windows.exe';
+    static const String windowsDownloadUrl = '$_releaseBase/streampilot-windows.exe';
   // Opens TestFlight app directly via its custom URL scheme.
   // Falls back to the https link if TestFlight is not installed.
   static const String iosTestFlightSchemeUrl = 'itms-beta://testflight.apple.com/join/fJb6nsgN';
