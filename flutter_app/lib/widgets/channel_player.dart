@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../config/device_utils.dart';
 import 'package:media_kit/media_kit.dart';
@@ -10,11 +11,15 @@ import 'package:media_kit_video/media_kit_video.dart';
 class ChannelPlayer extends StatefulWidget {
   final String streamUrl;
   final bool isActiveRecording;
+  final VoidCallback? onNextChannel;
+  final VoidCallback? onPreviousChannel;
 
   const ChannelPlayer({
     super.key,
     required this.streamUrl,
     this.isActiveRecording = false,
+    this.onNextChannel,
+    this.onPreviousChannel,
   });
 
   @override
@@ -39,14 +44,12 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _completedSub;
   Timer? _startupTimer;
-  Timer? _fullscreenResumeTimer;
   Timer? _recordingResumeTimer;
   Timer? _stalenessTimer;
 
   int _attempt = 0;
   bool _loading = true;
   String? _error;
-  bool _lastObservedPlaying = false;
   bool _inFullscreen = false;
   AppLifecycleState? _lifecycleState;
   Duration _lastKnownPosition = Duration.zero;
@@ -55,6 +58,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   int _softResumeFailures = 0;
   DateTime _lastPreemptiveResumeAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _backgroundHandoffInProgress = false;
+  bool _controlsVisibleNonFullscreen = true;
+  Timer? _hideControlsNonFullscreenTimer;
 
   static const Map<String, String> _streamHeaders = {
     'User-Agent': 'IPTVPlayer/1.0 media_kit',
@@ -68,7 +73,6 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _completedSub?.cancel();
 
     _playingSub = _player.stream.playing.listen((playing) {
-      _lastObservedPlaying = playing;
       if (!mounted) return;
 
       // While in fullscreen on iOS, the inner Video widget created by
@@ -230,59 +234,6 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycleState = state;
-  }
-
-  Future<void> _toggleNativeFullscreen({required bool entering}) async {
-    _inFullscreen = entering;
-
-    final shouldResume =
-        _player.state.playing ||
-        _lastObservedPlaying ||
-        (Platform.isIOS && entering);
-
-    if (entering) {
-      await defaultEnterNativeFullscreen();
-    } else {
-      await defaultExitNativeFullscreen();
-    }
-
-    _refreshVideoOutputAfterTransition(shouldResume: shouldResume);
-  }
-
-  void _refreshVideoOutputAfterTransition({required bool shouldResume}) {
-    _fullscreenResumeTimer?.cancel();
-    if (!mounted) return;
-
-    if (!Platform.isIOS) {
-      _fullscreenResumeTimer = Timer(const Duration(milliseconds: 400), () {
-        if (!mounted || _player.state.playing) return;
-        _player.play();
-      });
-      return;
-    }
-
-    // iOS: the player state reports playing=true throughout the fullscreen
-    // transition, but the video appears frozen because media_kit_video's
-    // fullscreen route attaches a new rendering surface and the decoder has
-    // not yet flushed a frame to it.
-    //
-    // Seeking to the current position forces the decoder to deliver a fresh
-    // frame to the new surface, unfreezing the video. We wait 400 ms to give
-    // the route animation time to attach the surface before seeking.
-    _fullscreenResumeTimer = Timer(const Duration(milliseconds: 400), () async {
-      if (!mounted) return;
-
-      final pos = _player.state.position;
-      try {
-        await _player.seek(pos);
-      } catch (_) {
-        // Ignore transient seek failures during fullscreen transition.
-      }
-
-      if (mounted && shouldResume && !_player.state.playing) {
-        await _player.play();
-      }
-    });
   }
 
   @override
@@ -475,7 +426,6 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _fullscreenResumeTimer?.cancel();
     _recordingResumeTimer?.cancel();
     _stalenessTimer?.cancel();
     _startupTimer?.cancel();
@@ -483,43 +433,398 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _bufferingSub?.cancel();
     _errorSub?.cancel();
     _completedSub?.cancel();
+    _hideControlsNonFullscreenTimer?.cancel();
     _player.dispose();
     super.dispose();
   }
 
   void _enterFullscreen() {
-    _videoKey.currentState?.enterFullscreen();
+    if (_inFullscreen || !mounted) return;
+
+    setState(() => _inFullscreen = true);
+    unawaited(_setMacOSNativeFullscreen(true));
+
+    Navigator.of(context, rootNavigator: true)
+        .push(
+          PageRouteBuilder<void>(
+            opaque: true,
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                _FullscreenChannelView(
+              player: _player,
+              controller: _controller,
+              onNextChannel: widget.onNextChannel,
+              onPreviousChannel: widget.onPreviousChannel,
+            ),
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) =>
+                FadeTransition(opacity: animation, child: child),
+          ),
+        )
+        .whenComplete(() {
+          if (mounted) {
+            setState(() => _inFullscreen = false);
+          }
+          unawaited(_setMacOSNativeFullscreen(false));
+        });
+  }
+
+  Future<void> _setMacOSNativeFullscreen(bool enabled) async {
+    if (!Platform.isMacOS) return;
+    try {
+      final currentlyFullscreen = await windowManager.isFullScreen();
+      if (currentlyFullscreen != enabled) {
+        await windowManager.setFullScreen(enabled);
+      }
+    } catch (e) {
+      debugPrint('Failed to toggle macOS native fullscreen: $e');
+    }
+  }
+
+  void _showControlsNonFullscreen() {
+    if (!mounted) return;
+    setState(() => _controlsVisibleNonFullscreen = true);
+    _hideControlsNonFullscreenTimer?.cancel();
+    _hideControlsNonFullscreenTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) {
+        setState(() => _controlsVisibleNonFullscreen = false);
+      }
+    });
+  }
+
+  String _formatDuration(Duration value) {
+    final totalSeconds = value.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _togglePlayPause() async {
+    if (_player.state.playing) {
+      await _player.pause();
+      return;
+    }
+    await _player.play();
+  }
+
+  Future<void> _seekBy(Duration delta) async {
+    final current = _player.state.position;
+    final duration = _player.state.duration;
+    var target = current + delta;
+    if (target < Duration.zero) target = Duration.zero;
+    if (duration > Duration.zero && target > duration) target = duration;
+    await _player.seek(target);
+  }
+
+  double _lastNonZeroVolume = 100.0;
+
+  Future<void> _toggleMute() async {
+    final volume = _player.state.volume;
+    if (volume > 0) {
+      _lastNonZeroVolume = volume;
+      await _player.setVolume(0);
+      return;
+    }
+    final restore = _lastNonZeroVolume <= 0 ? 100.0 : _lastNonZeroVolume;
+    await _player.setVolume(restore);
+  }
+
+  Widget _buildControlBar() {
+    final isCompactIos = Platform.isIOS;
+    final horizontalPadding = isCompactIos ? 6.0 : 8.0;
+    final verticalPadding = isCompactIos ? 4.0 : 6.0;
+    final timeFontSize = isCompactIos ? 9.0 : 10.0;
+    final trackHeight = isCompactIos ? 1.5 : 2.0;
+    final thumbRadius = isCompactIos ? 3.0 : 4.0;
+    final rowGap = isCompactIos ? 1.0 : 2.0;
+    final smallButtonSize = isCompactIos ? 24.0 : 28.0;
+    final playButtonSize = isCompactIos ? 28.0 : 32.0;
+    final iconSize = isCompactIos ? 14.0 : 16.0;
+    final playIconSize = isCompactIos ? 22.0 : 26.0;
+
+    return StreamBuilder<Duration>(
+      stream: _player.stream.position,
+      initialData: _player.state.position,
+      builder: (context, positionSnapshot) {
+        final position = positionSnapshot.data ?? Duration.zero;
+        return StreamBuilder<Duration>(
+          stream: _player.stream.duration,
+          initialData: _player.state.duration,
+          builder: (context, durationSnapshot) {
+            final duration = durationSnapshot.data ?? Duration.zero;
+            final hasFiniteDuration = duration > Duration.zero;
+            final maxMs = hasFiniteDuration
+                ? duration.inMilliseconds.toDouble()
+                : 1.0;
+            final currentMs = hasFiniteDuration
+                ? position.inMilliseconds
+                      .clamp(0, duration.inMilliseconds)
+                      .toDouble()
+                : 0.0;
+
+            return Material(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: horizontalPadding,
+                  vertical: verticalPadding,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          _formatDuration(position),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: timeFontSize,
+                          ),
+                        ),
+                        SizedBox(width: isCompactIos ? 4 : 6),
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: trackHeight,
+                              thumbShape: RoundSliderThumbShape(
+                                enabledThumbRadius: thumbRadius,
+                              ),
+                            ),
+                            child: Slider(
+                              value: currentMs,
+                              min: 0,
+                              max: maxMs,
+                              onChanged: !hasFiniteDuration
+                                  ? null
+                                  : (value) {
+                                      _player.seek(
+                                        Duration(milliseconds: value.round()),
+                                      );
+                                    },
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: isCompactIos ? 4 : 6),
+                        Text(
+                          hasFiniteDuration ? _formatDuration(duration) : 'LIVE',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: timeFontSize,
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: rowGap),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: smallButtonSize,
+                                height: smallButtonSize,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  tooltip: 'Back 10s',
+                                  iconSize: iconSize,
+                                  icon: const Icon(Icons.replay_10, color: Colors.white),
+                                  onPressed: () => _seekBy(
+                                    const Duration(seconds: -10),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(width: isCompactIos ? 2 : 4),
+                              StreamBuilder<bool>(
+                                stream: _player.stream.playing,
+                                initialData: _player.state.playing,
+                                builder: (context, playingSnapshot) {
+                                  final playing =
+                                      playingSnapshot.data ?? _player.state.playing;
+                                  return SizedBox(
+                                    width: playButtonSize,
+                                    height: playButtonSize,
+                                    child: IconButton(
+                                      padding: EdgeInsets.zero,
+                                      tooltip: playing ? 'Pause' : 'Play',
+                                      icon: Icon(
+                                        playing
+                                            ? Icons.pause_circle_filled
+                                            : Icons.play_circle_fill,
+                                        color: Colors.white,
+                                        size: playIconSize,
+                                      ),
+                                      onPressed: _togglePlayPause,
+                                    ),
+                                  );
+                                },
+                              ),
+                              SizedBox(width: isCompactIos ? 2 : 4),
+                              SizedBox(
+                                width: smallButtonSize,
+                                height: smallButtonSize,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  tooltip: 'Forward 10s',
+                                  iconSize: iconSize,
+                                  icon: const Icon(Icons.forward_10, color: Colors.white),
+                                  onPressed: () => _seekBy(
+                                    const Duration(seconds: 10),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(width: isCompactIos ? 4 : 8),
+                              StreamBuilder<double>(
+                                stream: _player.stream.volume,
+                                initialData: _player.state.volume,
+                                builder: (context, volumeSnapshot) {
+                                  final volume =
+                                      volumeSnapshot.data ?? _player.state.volume;
+                                  final muted = volume <= 0.0;
+                                  return SizedBox(
+                                    width: smallButtonSize,
+                                    height: smallButtonSize,
+                                    child: IconButton(
+                                      padding: EdgeInsets.zero,
+                                      tooltip: muted ? 'Unmute' : 'Mute',
+                                      iconSize: iconSize,
+                                      icon: Icon(
+                                        muted ? Icons.volume_off : Icons.volume_up,
+                                        color: Colors.white,
+                                      ),
+                                      onPressed: _toggleMute,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (!isAndroidTv(context))
+                          SizedBox(
+                            width: smallButtonSize,
+                            height: smallButtonSize,
+                            child: IconButton(
+                              padding: EdgeInsets.zero,
+                              tooltip: 'Fullscreen',
+                              iconSize: iconSize,
+                              icon: const Icon(Icons.fullscreen, color: Colors.white),
+                              onPressed: _enterFullscreen,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final isTv = isAndroidTv(context);
+
     final playerWidget = ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: AspectRatio(
         aspectRatio: 16 / 9,
-        child: Stack(
-          children: [
-            Positioned.fill(child: _buildPlayer()),
-            if (_loading && _error == null)
-              const Positioned.fill(
-                child: ColoredBox(
-                  color: Color(0x66000000),
-                  child: Center(child: CircularProgressIndicator()),
+        child: MouseRegion(
+          onEnter: (_) => _showControlsNonFullscreen(),
+          onHover: (_) => _showControlsNonFullscreen(),
+          child: GestureDetector(
+            onTapDown: (_) => _showControlsNonFullscreen(),
+            behavior: HitTestBehavior.translucent,
+            child: Stack(
+              children: [
+                Positioned.fill(child: _buildPlayer()),
+                if (_loading && _error == null)
+                  const Positioned.fill(
+                    child: ColoredBox(
+                      color: Color(0x66000000),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  ),
+                // Nav arrows (non-fullscreen) with auto-hide
+                if (widget.onPreviousChannel != null)
+                  Positioned(
+                    left: 8,
+                    top: 50,
+                    bottom: 50,
+                    width: 24,
+                    child: AnimatedOpacity(
+                      opacity: _controlsVisibleNonFullscreen ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.onPreviousChannel,
+                        child: const Center(
+                          child: Icon(
+                            Icons.chevron_left,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (widget.onNextChannel != null)
+                  Positioned(
+                    right: 8,
+                    top: 50,
+                    bottom: 50,
+                    width: 24,
+                    child: AnimatedOpacity(
+                      opacity: _controlsVisibleNonFullscreen ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.onNextChannel,
+                        child: const Center(
+                          child: Icon(
+                            Icons.chevron_right,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Bottom control bar (non-fullscreen)
+                Positioned(
+                  left: 8,
+                  right: 8,
+                  bottom: 8,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisibleNonFullscreen ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: _buildControlBar(),
+                  ),
                 ),
-              ),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
 
+    final playerWithNav = playerWidget;
+
     // On non-Android-TV platforms just return the player as-is.
-    if (!isAndroidTv(context)) return playerWidget;
+    if (!isTv) return playerWithNav; 
 
     // On Android TV: overlay a focusable fullscreen button in the corner so
     // the user can reach it with the D-pad and press OK to go fullscreen.
     return Stack(
       children: [
-        playerWidget,
+        playerWithNav,
         Positioned(
           right: 8,
           bottom: 8,
@@ -604,12 +909,359 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     return Video(
       key: _videoKey,
       controller: _controller,
-      controls: AdaptiveVideoControls,
+      controls: NoVideoControls,
       fit: BoxFit.contain,
       pauseUponEnteringBackgroundMode: !Platform.isIOS,
       resumeUponEnteringForegroundMode: true,
-      onEnterFullscreen: () => _toggleNativeFullscreen(entering: true),
-      onExitFullscreen: () => _toggleNativeFullscreen(entering: false),
+    );
+  }
+}
+
+class _FullscreenChannelView extends StatefulWidget {
+  const _FullscreenChannelView({
+    required this.player,
+    required this.controller,
+    required this.onNextChannel,
+    required this.onPreviousChannel,
+  });
+
+  final Player player;
+  final VideoController controller;
+  final VoidCallback? onNextChannel;
+  final VoidCallback? onPreviousChannel;
+
+  @override
+  State<_FullscreenChannelView> createState() => _FullscreenChannelViewState();
+}
+
+class _FullscreenChannelViewState extends State<_FullscreenChannelView>
+    with WidgetsBindingObserver {
+  double _lastNonZeroVolume = 100.0;
+  bool _controlsVisible = true;
+  Timer? _hideControlsTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetHideControlsTimer();
+  }
+
+  @override
+  void dispose() {
+    _hideControlsTimer?.cancel();
+    super.dispose();
+  }
+
+  void _resetHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _controlsVisible = true);
+    _hideControlsTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) {
+        setState(() => _controlsVisible = false);
+      }
+    });
+  }
+
+  void _showControls() {
+    if (!mounted) return;
+    setState(() => _controlsVisible = true);
+    _resetHideControlsTimer();
+  }
+
+  String _formatDuration(Duration value) {
+    final totalSeconds = value.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _togglePlayPause() async {
+    if (widget.player.state.playing) {
+      await widget.player.pause();
+      return;
+    }
+    await widget.player.play();
+  }
+
+  Future<void> _seekBy(Duration delta) async {
+    final current = widget.player.state.position;
+    final duration = widget.player.state.duration;
+    var target = current + delta;
+    if (target < Duration.zero) target = Duration.zero;
+    if (duration > Duration.zero && target > duration) target = duration;
+    await widget.player.seek(target);
+  }
+
+  Future<void> _toggleMute() async {
+    final volume = widget.player.state.volume;
+    if (volume > 0) {
+      _lastNonZeroVolume = volume;
+      await widget.player.setVolume(0);
+      return;
+    }
+    final restore = _lastNonZeroVolume <= 0 ? 100.0 : _lastNonZeroVolume;
+    await widget.player.setVolume(restore);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final safePadding = MediaQuery.paddingOf(context);
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: MouseRegion(
+        onEnter: (_) => _showControls(),
+        onHover: (_) => _showControls(),
+        child: GestureDetector(
+          onTapDown: (_) => _showControls(),
+          behavior: HitTestBehavior.translucent,
+          child: Stack(
+            children: [
+              // Video
+              Positioned.fill(
+                child: Center(
+                  child: Video(
+                    controller: widget.controller,
+                    controls: NoVideoControls,
+                    fit: BoxFit.contain,
+                    pauseUponEnteringBackgroundMode: !Platform.isIOS,
+                    resumeUponEnteringForegroundMode: true,
+                  ),
+                ),
+              ),
+              // Left arrow with auto-hide
+              if (widget.onPreviousChannel != null)
+                Positioned(
+                  left: safePadding.left + 8,
+                  top: 0,
+                  bottom: 0,
+                  width: 40,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisible ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: widget.onPreviousChannel,
+                      child: const Center(
+                        child: Icon(
+                          Icons.chevron_left,
+                          color: Colors.white,
+                          size: 34,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // Right arrow with auto-hide
+              if (widget.onNextChannel != null)
+                Positioned(
+                  right: safePadding.right + 8,
+                  top: 0,
+                  bottom: 0,
+                  width: 40,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisible ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: widget.onNextChannel,
+                      child: const Center(
+                        child: Icon(
+                          Icons.chevron_right,
+                          color: Colors.white,
+                          size: 34,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // Bottom control bar
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 16,
+                child: AnimatedOpacity(
+                  opacity: _controlsVisible ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 300),
+                  child: _buildFullscreenControlBar(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFullscreenControlBar() {
+    return StreamBuilder<Duration>(
+      stream: widget.player.stream.position,
+      initialData: widget.player.state.position,
+      builder: (context, positionSnapshot) {
+        final position = positionSnapshot.data ?? Duration.zero;
+        return StreamBuilder<Duration>(
+          stream: widget.player.stream.duration,
+          initialData: widget.player.state.duration,
+          builder: (context, durationSnapshot) {
+            final duration = durationSnapshot.data ?? Duration.zero;
+            final hasFiniteDuration = duration > Duration.zero;
+            final maxMs = hasFiniteDuration
+                ? duration.inMilliseconds.toDouble()
+                : 1.0;
+            final currentMs = hasFiniteDuration
+                ? position.inMilliseconds
+                      .clamp(0, duration.inMilliseconds)
+                      .toDouble()
+                : 0.0;
+
+            return Material(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          _formatDuration(position),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: 3,
+                              thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 6,
+                              ),
+                            ),
+                            child: Slider(
+                              value: currentMs,
+                              min: 0,
+                              max: maxMs,
+                              onChanged: !hasFiniteDuration
+                                  ? null
+                                  : (value) {
+                                      widget.player.seek(
+                                        Duration(
+                                          milliseconds: value.round(),
+                                        ),
+                                      );
+                                    },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          hasFiniteDuration
+                              ? _formatDuration(duration)
+                              : 'LIVE',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                tooltip: 'Back 10s',
+                                icon: const Icon(
+                                  Icons.replay_10,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () => _seekBy(
+                                  const Duration(seconds: -10),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              StreamBuilder<bool>(
+                                stream: widget.player.stream.playing,
+                                initialData: widget.player.state.playing,
+                                builder: (context, playingSnapshot) {
+                                  final playing =
+                                      playingSnapshot.data ?? widget.player.state.playing;
+                                  return IconButton(
+                                    tooltip: playing ? 'Pause' : 'Play',
+                                    icon: Icon(
+                                      playing
+                                          ? Icons.pause_circle_filled
+                                          : Icons.play_circle_fill,
+                                      color: Colors.white,
+                                      size: 34,
+                                    ),
+                                    onPressed: _togglePlayPause,
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 4),
+                              IconButton(
+                                tooltip: 'Forward 10s',
+                                icon: const Icon(
+                                  Icons.forward_10,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () => _seekBy(
+                                  const Duration(seconds: 10),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              StreamBuilder<double>(
+                                stream: widget.player.stream.volume,
+                                initialData: widget.player.state.volume,
+                                builder: (context, volumeSnapshot) {
+                                  final volume =
+                                      volumeSnapshot.data ?? widget.player.state.volume;
+                                  final muted = volume <= 0.0;
+                                  return IconButton(
+                                    tooltip: muted ? 'Unmute' : 'Mute',
+                                    icon: Icon(
+                                      muted ? Icons.volume_off : Icons.volume_up,
+                                      color: Colors.white,
+                                    ),
+                                    onPressed: _toggleMute,
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Exit Fullscreen',
+                          icon: const Icon(
+                            Icons.fullscreen_exit,
+                            color: Colors.white,
+                          ),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'config/app_config.dart';
 import 'screens/home_screen.dart';
@@ -11,9 +14,13 @@ import 'services/auth_store.dart';
 import 'services/playlist_store.dart';
 import 'services/version_service.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+
+  if (Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+  }
   
   MediaKit.ensureInitialized();
   final api = ApiClient(baseUrl: AppConfig.apiBase);

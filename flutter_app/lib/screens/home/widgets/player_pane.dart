@@ -24,6 +24,30 @@ class PlayerPane extends StatelessWidget {
     return normalized;
   }
 
+  Future<void> _playNextChannel() async {
+    final channels = store.channels;
+    final nowPlaying = store.nowPlaying;
+    if (channels.isEmpty || nowPlaying == null) return;
+
+    final currentIndex = channels.indexWhere((c) => c.id == nowPlaying.id);
+    if (currentIndex < 0) return;
+
+    final nextIndex = (currentIndex + 1) % channels.length;
+    await store.play(channels[nextIndex]);
+  }
+
+  Future<void> _playPreviousChannel() async {
+    final channels = store.channels;
+    final nowPlaying = store.nowPlaying;
+    if (channels.isEmpty || nowPlaying == null) return;
+
+    final currentIndex = channels.indexWhere((c) => c.id == nowPlaying.id);
+    if (currentIndex < 0) return;
+
+    final nextIndex = currentIndex == 0 ? channels.length - 1 : currentIndex - 1;
+    await store.play(channels[nextIndex]);
+  }
+
   Widget _buildEpgEntryCard(BuildContext context, EpgEntry entry) {
     final timeRange =
         '${_fmtTime(entry.startTime)} - ${_fmtTime(entry.endTime)}';
@@ -58,6 +82,8 @@ class PlayerPane extends StatelessWidget {
       ChannelPlayer(
         streamUrl: channel.streamUrl,
         isActiveRecording: store.isChannelActivelyRecording(channel),
+        onNextChannel: _playNextChannel,
+        onPreviousChannel: _playPreviousChannel,
       ),
       const SizedBox(height: 12),
       Text(
@@ -138,6 +164,8 @@ class PlayerPane extends StatelessWidget {
                     isActiveRecording: store.isChannelActivelyRecording(
                       channel,
                     ),
+                    onNextChannel: _playNextChannel,
+                    onPreviousChannel: _playPreviousChannel,
                   ),
                 ),
                 const SizedBox(height: 12),

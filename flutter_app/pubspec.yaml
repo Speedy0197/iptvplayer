@@ -49,6 +49,7 @@ dependencies:
   open_filex: ^4.7.0
   path_provider: ^2.1.5
   xml: ^6.6.1
+  window_manager: ^0.5.1
 
 dev_dependencies:
   flutter_test:
