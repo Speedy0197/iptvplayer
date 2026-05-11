@@ -29,7 +29,8 @@
       "Bash(flutter pub *)",
       "Bash(flutter devices *)",
       "Bash(open -a Simulator)",
-      "Bash(flutter run *)"
+      "Bash(flutter run *)",
+      "Bash(flutter analyze *)"
     ]
   }
 }

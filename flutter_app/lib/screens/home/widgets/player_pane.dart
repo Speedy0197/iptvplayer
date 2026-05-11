@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../config/device_utils.dart';
 import '../../../config/ui_constants.dart';
 import '../../../models/models.dart';
 import '../../../services/playlist_store.dart';
@@ -48,7 +49,7 @@ class PlayerPane extends StatelessWidget {
     await store.play(channels[nextIndex]);
   }
 
-  Widget _buildEpgEntryCard(BuildContext context, EpgEntry entry) {
+  Widget _buildEpgEntryCard(BuildContext context, EpgEntry entry, bool isTv) {
     final timeRange =
         '${_fmtTime(entry.startTime)} - ${_fmtTime(entry.endTime)}';
     final description = _descriptionPreview(entry.description);
@@ -61,6 +62,7 @@ class PlayerPane extends StatelessWidget {
       canRecord: store.isSelectedPlaylistVuplus,
       hasEnded: entry.endTime.isBefore(DateTime.now()),
       isTimerScheduled: store.isTimerScheduled(entry),
+      isTv: isTv,
       onRecord: () => store.recordEpgEntry(entry),
       onRemoveTimer: () => store.removeEpgTimer(entry),
     );
@@ -71,6 +73,9 @@ class PlayerPane extends StatelessWidget {
     final Channel? channel = store.nowPlaying;
     final isCompactLayout =
         MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    final isTv = isAndroidTv(context);
+    final epgLimit =
+        isTv ? kTvEpgEntriesToShow : kDesktopEpgEntriesToShow;
 
     if (channel == null) {
       return const Card(
@@ -108,8 +113,8 @@ class PlayerPane extends StatelessWidget {
         ? nowIndex
         : allEpg.indexWhere((e) => e.startTime.isAfter(now));
     final epgToShow = startIndex >= 0
-        ? allEpg.skip(startIndex).take(5).toList()
-        : allEpg.take(5).toList();
+        ? allEpg.skip(startIndex).take(epgLimit).toList()
+        : allEpg.take(epgLimit).toList();
 
     if (isCompactLayout) {
       return Card(
@@ -134,7 +139,9 @@ class PlayerPane extends StatelessWidget {
                   child: Text('No EPG data available'),
                 )
               else
-                ...epgToShow.map((entry) => _buildEpgEntryCard(context, entry)),
+                ...epgToShow.map(
+                  (entry) => _buildEpgEntryCard(context, entry, isTv),
+                ),
             ],
           ),
         ),
@@ -149,7 +156,11 @@ class PlayerPane extends StatelessWidget {
               ? constraints.maxWidth
               : 500;
           final maxPlayerWidth = (availableWidth * 0.95).clamp(200.0, 1500.0);
-          final playerHeight = (maxPlayerWidth / 16 * 9).clamp(160.0, 400.0);
+          // On Android TV we let the embedded player grow taller so it's
+          // comfortable to watch from couch distance without going fullscreen.
+          final maxPlayerHeight = isTv ? kTvPlayerMaxHeight : 400.0;
+          final playerHeight =
+              (maxPlayerWidth / 16 * 9).clamp(160.0, maxPlayerHeight);
 
           return Padding(
             padding: const EdgeInsets.all(16),
@@ -198,7 +209,7 @@ class PlayerPane extends StatelessWidget {
                           itemCount: epgToShow.length,
                           itemBuilder: (context, i) {
                             final e = epgToShow[i];
-                            return _buildEpgEntryCard(context, e);
+                            return _buildEpgEntryCard(context, e, isTv);
                           },
                         ),
                 ),
@@ -219,6 +230,7 @@ class _EpgEntryCard extends StatefulWidget {
   final bool canRecord;
   final bool hasEnded;
   final bool isTimerScheduled;
+  final bool isTv;
   final Future<void> Function() onRecord;
   final Future<void> Function() onRemoveTimer;
 
@@ -230,6 +242,7 @@ class _EpgEntryCard extends StatefulWidget {
     required this.canRecord,
     required this.hasEnded,
     required this.isTimerScheduled,
+    required this.isTv,
     required this.onRecord,
     required this.onRemoveTimer,
   });
@@ -340,11 +353,20 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final titleStyle = widget.isTv
+        ? theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)
+        : null;
+    final timeStyle = widget.isTv
+        ? theme.textTheme.titleSmall
+        : theme.textTheme.bodyMedium;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
         key: PageStorageKey<String>(widget.storageKey),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        tilePadding: widget.isTv
+            ? const EdgeInsets.symmetric(horizontal: 20, vertical: 12)
+            : const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         onExpansionChanged: (value) {
           setState(() {
@@ -366,6 +388,7 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                     widget.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                    style: titleStyle,
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -375,7 +398,7 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                           widget.timeRange,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium,
+                          style: timeStyle,
                         ),
                       ),
                       if (widget.canRecord) ...[
@@ -395,6 +418,7 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                     widget.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                    style: titleStyle,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -403,7 +427,7 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
                     widget.timeRange,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium,
+                    style: timeStyle,
                   ),
                 ),
                 if (widget.canRecord) ...[const SizedBox(width: 4), controls],

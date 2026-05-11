@@ -769,11 +769,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             },
           );
         }
+        final isTv = isAndroidTv(context);
+        final playlistsWidth = isTv ? kTvPlaylistsColumnWidth : 280.0;
+        final channelsWidth = isTv ? kTvChannelsColumnWidth : 280.0;
         return Row(
           children: [
-            SizedBox(width: 280, child: WatchPlaylistsPane(store: store)),
+            SizedBox(
+              width: playlistsWidth,
+              child: WatchPlaylistsPane(store: store),
+            ),
             const SizedBox(width: 8),
-            SizedBox(width: 280, child: ChannelsPane(store: store)),
+            SizedBox(
+              width: channelsWidth,
+              child: ChannelsPane(store: store),
+            ),
             const SizedBox(width: 8),
             Expanded(child: PlayerPane(store: store)),
           ],
@@ -887,6 +896,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             style: IconButton.styleFrom(
               minimumSize: const Size(44, 44),
               tapTargetSize: MaterialTapTargetSize.padded,
+            ),
+          ),
+        ),
+        child: bodyContent,
+      );
+    } else if (isAndroidTv(context)) {
+      // TV-tuned theme: scale text up, taller list tiles, larger icons.
+      // Lean-back distance means defaults are too small to read comfortably.
+      final base = Theme.of(context);
+      bodyContent = Theme(
+        data: base.copyWith(
+          textTheme: base.textTheme.apply(fontSizeFactor: kTvFontScale),
+          listTileTheme: base.listTileTheme.copyWith(
+            minTileHeight: kTvListTileMinHeight,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 6,
+            ),
+          ),
+          iconTheme: base.iconTheme.copyWith(size: 28),
+          iconButtonTheme: IconButtonThemeData(
+            style: IconButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              iconSize: 26,
             ),
           ),
         ),
