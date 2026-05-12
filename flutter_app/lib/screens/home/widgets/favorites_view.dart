@@ -16,6 +16,7 @@ class FavoritesView extends StatelessWidget {
   final ChannelTapCallback onChannelTap;
   final bool compact;
   final bool withPlayer;
+  final FocusNode? initialFocusNode;
 
   const FavoritesView({
     super.key,
@@ -24,6 +25,7 @@ class FavoritesView extends StatelessWidget {
     required this.onChannelTap,
     this.compact = false,
     this.withPlayer = true,
+    this.initialFocusNode,
   });
 
   String _playlistNameFor(int playlistId) {
@@ -40,11 +42,12 @@ class FavoritesView extends StatelessWidget {
 
     final favoriteLists = Column(
       children: [
-        const ListTile(
-          dense: true,
-          leading: Icon(Icons.folder_open),
-          title: Text('Favorite Groups'),
-        ),
+        if (!isTv)
+          const ListTile(
+            dense: true,
+            leading: Icon(Icons.folder_open),
+            title: Text('Favorite Groups'),
+          ),
         Expanded(
           child: store.loadingFavoriteGroups
               ? const Center(child: CircularProgressIndicator())
@@ -60,17 +63,19 @@ class FavoritesView extends StatelessWidget {
                       playlistName: _playlistNameFor(g.playlistId),
                       onTap: onGroupTap,
                       isTv: isTv,
-                      autofocus: isTv && i == 0,
+                      autofocus: isTv && i == 0 && initialFocusNode == null,
+                      focusNode: i == 0 ? initialFocusNode : null,
                     );
                   },
                 ),
         ),
         const Divider(height: 1),
-        const ListTile(
-          dense: true,
-          leading: Icon(Icons.tv),
-          title: Text('Favorite Channels'),
-        ),
+        if (!isTv)
+          const ListTile(
+            dense: true,
+            leading: Icon(Icons.tv),
+            title: Text('Favorite Channels'),
+          ),
         Expanded(
           child: store.loadingFavoriteChannels
               ? const Center(child: CircularProgressIndicator())
@@ -85,6 +90,7 @@ class FavoritesView extends StatelessWidget {
                       store: store,
                       onTap: onChannelTap,
                       isTv: isTv,
+                      autofocus: false,
                     );
                   },
                 ),
@@ -148,6 +154,7 @@ class _FavoriteGroupTile extends StatelessWidget {
   final GroupTapCallback onTap;
   final bool isTv;
   final bool autofocus;
+  final FocusNode? focusNode;
 
   const _FavoriteGroupTile({
     required this.group,
@@ -156,6 +163,7 @@ class _FavoriteGroupTile extends StatelessWidget {
     required this.onTap,
     required this.isTv,
     required this.autofocus,
+    this.focusNode,
   });
 
   Future<void> _open() => onTap(group);
@@ -168,9 +176,9 @@ class _FavoriteGroupTile extends StatelessWidget {
           await store.toggleFavoriteGroup(group);
         } on ApiException catch (e) {
           if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.message)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(e.message)));
         }
       },
       icon: const Icon(Icons.star, color: Colors.amber),
@@ -183,13 +191,17 @@ class _FavoriteGroupTile extends StatelessWidget {
     }
 
     final tile = ListTile(
-      dense: !isTv,
+      dense: true,
+      visualDensity: isTv ? VisualDensity.compact : VisualDensity.standard,
+      minVerticalPadding: isTv ? 0 : null,
       title: Text(group.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        '$playlistName • ${group.channelCount} channels',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      subtitle: isTv
+          ? null
+          : Text(
+              '$playlistName • ${group.channelCount} channels',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
       trailing: trailing,
       onTap: isTv ? null : _open,
     );
@@ -197,7 +209,8 @@ class _FavoriteGroupTile extends StatelessWidget {
     if (!isTv) return tile;
 
     return TvFocusableTile(
-      autofocus: autofocus,
+      autofocus: autofocus && focusNode == null,
+      focusNode: focusNode,
       onTap: _open,
       onLongPress: () => showGroupActionSheet(
         context,
@@ -215,12 +228,16 @@ class _FavoriteChannelTile extends StatelessWidget {
   final PlaylistStore store;
   final ChannelTapCallback onTap;
   final bool isTv;
+  final bool autofocus;
+  final FocusNode? focusNode;
 
   const _FavoriteChannelTile({
     required this.channel,
     required this.store,
     required this.onTap,
     required this.isTv,
+    this.autofocus = false,
+    this.focusNode,
   });
 
   Future<void> _play() => onTap(channel);
@@ -236,9 +253,9 @@ class _FavoriteChannelTile extends StatelessWidget {
           await store.toggleFavorite(c);
         } on ApiException catch (e) {
           if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.message)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(e.message)));
         }
       },
       icon: const Icon(Icons.star, color: Colors.amber),
@@ -254,8 +271,13 @@ class _FavoriteChannelTile extends StatelessWidget {
       selected: selected,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       leading: ChannelLogoAvatar(logoUrl: c.logoUrl),
+      dense: true,
+      visualDensity: isTv ? VisualDensity.compact : VisualDensity.standard,
+      minVerticalPadding: isTv ? 0 : null,
       title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(c.groupName, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: isTv
+          ? null
+          : Text(c.groupName, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: trailing,
       onTap: isTv ? null : _play,
     );
@@ -263,6 +285,8 @@ class _FavoriteChannelTile extends StatelessWidget {
     if (!isTv) return tile;
 
     return TvFocusableTile(
+      autofocus: autofocus && focusNode == null,
+      focusNode: focusNode,
       onTap: _play,
       onLongPress: () => showChannelActionSheet(
         context,
@@ -278,11 +302,13 @@ class _FavoriteChannelTile extends StatelessWidget {
 class FavoriteGroupsList extends StatelessWidget {
   final PlaylistStore store;
   final GroupTapCallback onGroupTap;
+  final FocusNode? initialFocusNode;
 
   const FavoriteGroupsList({
     super.key,
     required this.store,
     required this.onGroupTap,
+    this.initialFocusNode,
   });
 
   @override
@@ -299,16 +325,18 @@ class FavoriteGroupsList extends StatelessWidget {
     return Card(
       child: Column(
         children: [
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.folder_open),
-            title: const Text('Favorite Groups'),
-            trailing: IconButton(
-              onPressed: store.fetchFavoriteGroups,
-              icon: const Icon(Icons.refresh),
+          if (!isTv) ...[
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.folder_open),
+              title: const Text('Favorite Groups'),
+              trailing: IconButton(
+                onPressed: store.fetchFavoriteGroups,
+                icon: const Icon(Icons.refresh),
+              ),
             ),
-          ),
-          const Divider(height: 1),
+            const Divider(height: 1),
+          ],
           Expanded(
             child: store.loadingFavoriteGroups
                 ? const Center(child: CircularProgressIndicator())
@@ -324,7 +352,8 @@ class FavoriteGroupsList extends StatelessWidget {
                         playlistName: playlistNameFor(g.playlistId),
                         onTap: onGroupTap,
                         isTv: isTv,
-                        autofocus: isTv && i == 0,
+                        autofocus: isTv && i == 0 && initialFocusNode == null,
+                        focusNode: i == 0 ? initialFocusNode : null,
                       );
                     },
                   ),
@@ -338,11 +367,13 @@ class FavoriteGroupsList extends StatelessWidget {
 class FavoriteChannelsList extends StatelessWidget {
   final PlaylistStore store;
   final ChannelTapCallback onChannelTap;
+  final FocusNode? initialFocusNode;
 
   const FavoriteChannelsList({
     super.key,
     required this.store,
     required this.onChannelTap,
+    this.initialFocusNode,
   });
 
   @override
@@ -352,16 +383,18 @@ class FavoriteChannelsList extends StatelessWidget {
     return Card(
       child: Column(
         children: [
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.tv),
-            title: const Text('Favorite Channels'),
-            trailing: IconButton(
-              onPressed: store.fetchFavoriteChannels,
-              icon: const Icon(Icons.refresh),
+          if (!isTv) ...[
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.tv),
+              title: const Text('Favorite Channels'),
+              trailing: IconButton(
+                onPressed: store.fetchFavoriteChannels,
+                icon: const Icon(Icons.refresh),
+              ),
             ),
-          ),
-          const Divider(height: 1),
+            const Divider(height: 1),
+          ],
           Expanded(
             child: store.loadingFavoriteChannels
                 ? const Center(child: CircularProgressIndicator())
@@ -376,6 +409,8 @@ class FavoriteChannelsList extends StatelessWidget {
                         store: store,
                         onTap: onChannelTap,
                         isTv: isTv,
+                        autofocus: isTv && i == 0 && initialFocusNode == null,
+                        focusNode: i == 0 ? initialFocusNode : null,
                       );
                     },
                   ),

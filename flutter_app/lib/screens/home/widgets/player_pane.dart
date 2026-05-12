@@ -5,6 +5,7 @@ import '../../../config/ui_constants.dart';
 import '../../../models/models.dart';
 import '../../../services/playlist_store.dart';
 import '../../../widgets/channel_player.dart';
+import '../../../widgets/tv_focusable_tile.dart';
 
 class PlayerPane extends StatelessWidget {
   final PlaylistStore store;
@@ -45,7 +46,9 @@ class PlayerPane extends StatelessWidget {
     final currentIndex = channels.indexWhere((c) => c.id == nowPlaying.id);
     if (currentIndex < 0) return;
 
-    final nextIndex = currentIndex == 0 ? channels.length - 1 : currentIndex - 1;
+    final nextIndex = currentIndex == 0
+        ? channels.length - 1
+        : currentIndex - 1;
     await store.play(channels[nextIndex]);
   }
 
@@ -74,8 +77,7 @@ class PlayerPane extends StatelessWidget {
     final isCompactLayout =
         MediaQuery.sizeOf(context).width < kCompactBreakpoint;
     final isTv = isAndroidTv(context);
-    final epgLimit =
-        isTv ? kTvEpgEntriesToShow : kDesktopEpgEntriesToShow;
+    final epgLimit = isTv ? kTvEpgEntriesToShow : kDesktopEpgEntriesToShow;
 
     if (channel == null) {
       return const Card(
@@ -115,6 +117,19 @@ class PlayerPane extends StatelessWidget {
     final epgToShow = startIndex >= 0
         ? allEpg.skip(startIndex).take(epgLimit).toList()
         : allEpg.take(epgLimit).toList();
+    final epgContent = store.loadingEpg
+        ? const Center(child: CircularProgressIndicator())
+        : store.epgSourceMissing
+        ? const Text('No EPG source configured for this channel')
+        : epgToShow.isEmpty
+        ? const Text('No EPG data available')
+        : ListView.builder(
+            itemCount: epgToShow.length,
+            itemBuilder: (context, i) {
+              final entry = epgToShow[i];
+              return _buildEpgEntryCard(context, entry, isTv);
+            },
+          );
 
     if (isCompactLayout) {
       return Card(
@@ -155,66 +170,117 @@ class PlayerPane extends StatelessWidget {
           final availableWidth = constraints.maxWidth > 0
               ? constraints.maxWidth
               : 500;
-          final maxPlayerWidth = (availableWidth * 0.95).clamp(200.0, 1500.0);
-          // On Android TV we let the embedded player grow taller so it's
-          // comfortable to watch from couch distance without going fullscreen.
-          final maxPlayerHeight = isTv ? kTvPlayerMaxHeight : 400.0;
-          final playerHeight =
-              (maxPlayerWidth / 16 * 9).clamp(160.0, maxPlayerHeight);
+          final availableHeight = constraints.maxHeight > 0
+              ? constraints.maxHeight
+              : 600;
+          final maxPlayerWidth = isTv
+              ? ((availableHeight * 0.48) * 16 / 9).clamp(
+                  200.0,
+                  availableWidth * 0.82,
+                )
+              : (availableWidth * 0.95).clamp(200.0, 1500.0);
+          // On TV, keep the current visual height and let width follow it.
+          final playerHeight = (maxPlayerWidth / 16 * 9).clamp(
+            160.0,
+            availableHeight * (isTv ? 0.48 : 0.6),
+          );
+          final tvInfoWidth = (availableWidth * 0.48).clamp(280.0, 720.0);
 
           return Padding(
             padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: maxPlayerWidth,
-                  height: playerHeight,
-                  child: ChannelPlayer(
-                    streamUrl: channel.streamUrl,
-                    isActiveRecording: store.isChannelActivelyRecording(
-                      channel,
-                    ),
-                    onNextChannel: _playNextChannel,
-                    onPreviousChannel: _playPreviousChannel,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  channel.name,
-                  style: Theme.of(context).textTheme.titleLarge,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  channel.groupName,
-                  style: Theme.of(context).textTheme.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'EPG',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: store.loadingEpg
-                      ? const Center(child: CircularProgressIndicator())
-                      : store.epgSourceMissing
-                      ? const Text('No EPG source configured for this channel')
-                      : epgToShow.isEmpty
-                      ? const Text('No EPG data available')
-                      : ListView.builder(
-                          itemCount: epgToShow.length,
-                          itemBuilder: (context, i) {
-                            final e = epgToShow[i];
-                            return _buildEpgEntryCard(context, e, isTv);
-                          },
+            child: isTv
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: tvInfoWidth,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: maxPlayerWidth,
+                              height: playerHeight,
+                              child: ChannelPlayer(
+                                streamUrl: channel.streamUrl,
+                                isActiveRecording: store
+                                    .isChannelActivelyRecording(channel),
+                                onNextChannel: _playNextChannel,
+                                onPreviousChannel: _playPreviousChannel,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              channel.name,
+                              style: Theme.of(context).textTheme.titleLarge,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              channel.groupName,
+                              style: Theme.of(context).textTheme.bodySmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ),
-                ),
-              ],
-            ),
+                      ),
+                      const SizedBox(width: 24),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'EPG',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Expanded(child: epgContent),
+                          ],
+                        ),
+                      ),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Align(
+                        alignment: Alignment.topLeft,
+                        child: SizedBox(
+                          width: maxPlayerWidth,
+                          height: playerHeight,
+                          child: ChannelPlayer(
+                            streamUrl: channel.streamUrl,
+                            isActiveRecording: store.isChannelActivelyRecording(
+                              channel,
+                            ),
+                            onNextChannel: _playNextChannel,
+                            onPreviousChannel: _playPreviousChannel,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        channel.name,
+                        style: Theme.of(context).textTheme.titleLarge,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        channel.groupName,
+                        style: Theme.of(context).textTheme.bodySmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'EPG',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(child: epgContent),
+                    ],
+                  ),
           );
         },
       ),
@@ -255,6 +321,12 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
   bool _expanded = false;
   bool _savingRecording = false;
   bool _removingTimer = false;
+
+  void _toggleExpanded() {
+    setState(() {
+      _expanded = !_expanded;
+    });
+  }
 
   Future<void> _removeTimer() async {
     if (_removingTimer) return;
@@ -305,6 +377,17 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
           _savingRecording = false;
         });
       }
+    }
+  }
+
+  Future<void> _handleTvLongPress() async {
+    if (!widget.canRecord) return;
+    if (widget.isTimerScheduled) {
+      await _removeTimer();
+      return;
+    }
+    if (!widget.hasEnded) {
+      await _saveRecording();
     }
   }
 
@@ -360,10 +443,11 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
     final timeStyle = widget.isTv
         ? theme.textTheme.titleSmall
         : theme.textTheme.bodyMedium;
-    return Card(
+    final card = Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
         key: PageStorageKey<String>(widget.storageKey),
+        initiallyExpanded: _expanded,
         tilePadding: widget.isTv
             ? const EdgeInsets.symmetric(horizontal: 20, vertical: 12)
             : const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -448,6 +532,67 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
             child: Text(widget.description),
           ),
         ],
+      ),
+    );
+
+    if (!widget.isTv) {
+      return card;
+    }
+
+    return TvFocusableTile(
+      margin: const EdgeInsets.only(bottom: 8),
+      onTap: _toggleExpanded,
+      onLongPress: widget.canRecord ? _handleTvLongPress : null,
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          maxLines: _expanded ? 3 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: titleStyle,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          widget.timeRange,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: timeStyle,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (widget.canRecord) ...[
+                    const SizedBox(width: 12),
+                    _buildRecordAction(context),
+                  ],
+                  const SizedBox(width: 8),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                widget.description,
+                maxLines: _expanded ? null : 2,
+                overflow: _expanded ? null : TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

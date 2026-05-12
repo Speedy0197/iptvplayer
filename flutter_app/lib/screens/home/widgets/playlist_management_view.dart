@@ -4,12 +4,13 @@ import 'package:flutter/foundation.dart';
 import '../../../models/models.dart';
 import '../../../services/playlist_store.dart';
 
-class PlaylistManagementView extends StatelessWidget {
+class PlaylistManagementView extends StatefulWidget {
   final PlaylistStore store;
   final VoidCallback onCreate;
   final ValueChanged<Playlist> onEdit;
   final Future<void> Function(Playlist) onRefresh;
   final ValueChanged<Playlist> onDelete;
+  final FocusNode? initialFocusNode;
 
   const PlaylistManagementView({
     super.key,
@@ -18,8 +19,14 @@ class PlaylistManagementView extends StatelessWidget {
     required this.onEdit,
     required this.onRefresh,
     required this.onDelete,
+    this.initialFocusNode,
   });
 
+  @override
+  State<PlaylistManagementView> createState() => _PlaylistManagementViewState();
+}
+
+class _PlaylistManagementViewState extends State<PlaylistManagementView> {
   bool _isAndroidTv(BuildContext context) {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return false;
@@ -52,22 +59,25 @@ class PlaylistManagementView extends StatelessWidget {
             trailing: isAndroidTv
                 ? null
                 : FilledButton.icon(
-                    onPressed: onCreate,
+                    onPressed: widget.onCreate,
                     icon: const Icon(Icons.add),
                     label: const Text('Add'),
                   ),
           ),
           const Divider(height: 1),
           Expanded(
-            child: store.playlists.isEmpty
+            child: widget.store.playlists.isEmpty
                 ? const Center(child: Text('No playlists yet'))
                 : ListView.separated(
                     padding: const EdgeInsets.all(12),
-                    itemCount: store.playlists.length,
+                    itemCount: widget.store.playlists.length,
                     separatorBuilder: (_, index) => const SizedBox(height: 8),
                     itemBuilder: (context, i) {
-                      final p = store.playlists[i];
-                      final isRefreshing = store.isRefreshingPlaylist(p.id);
+                      final p = widget.store.playlists[i];
+                      final isRefreshing = widget.store.isRefreshingPlaylist(
+                        p.id,
+                      );
+                      final isFirstItem = i == 0;
                       return Card(
                         child: ListTile(
                           title: Text(p.name),
@@ -79,13 +89,14 @@ class PlaylistManagementView extends StatelessWidget {
                                 IconButton(
                                   onPressed: isRefreshing
                                       ? null
-                                      : () => onEdit(p),
+                                      : () => widget.onEdit(p),
                                   icon: const Icon(Icons.edit_outlined),
                                 ),
                               IconButton(
+                                autofocus: isFirstItem && isAndroidTv,
                                 onPressed: isRefreshing
                                     ? null
-                                    : () => onRefresh(p),
+                                    : () => widget.onRefresh(p),
                                 tooltip: isRefreshing
                                     ? 'Updating playlist...'
                                     : 'Reload playlist',
@@ -103,7 +114,7 @@ class PlaylistManagementView extends StatelessWidget {
                                 IconButton(
                                   onPressed: isRefreshing
                                       ? null
-                                      : () => onDelete(p),
+                                      : () => widget.onDelete(p),
                                   icon: const Icon(Icons.delete_outline),
                                 ),
                             ],

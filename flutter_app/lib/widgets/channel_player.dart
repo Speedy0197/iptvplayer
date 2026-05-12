@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../config/device_utils.dart';
@@ -60,6 +61,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   bool _backgroundHandoffInProgress = false;
   bool _controlsVisibleNonFullscreen = true;
   Timer? _hideControlsNonFullscreenTimer;
+  FocusNode? _tvFullscreenFocusNode;
 
   static const Map<String, String> _streamHeaders = {
     'User-Agent': 'IPTVPlayer/1.0 media_kit',
@@ -240,6 +242,12 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (Platform.isAndroid) {
+      _tvFullscreenFocusNode = FocusNode();
+      _tvFullscreenFocusNode!.addListener(() {
+        if (mounted) setState(() {});
+      });
+    }
     _player = Player(
       configuration: const PlayerConfiguration(
         title: 'StreamPilot',
@@ -434,6 +442,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _errorSub?.cancel();
     _completedSub?.cancel();
     _hideControlsNonFullscreenTimer?.cancel();
+    _tvFullscreenFocusNode?.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -450,14 +459,14 @@ class _ChannelPlayerState extends State<ChannelPlayer>
             opaque: true,
             pageBuilder: (context, animation, secondaryAnimation) =>
                 _FullscreenChannelView(
-              player: _player,
-              controller: _controller,
-              onNextChannel: widget.onNextChannel,
-              onPreviousChannel: widget.onPreviousChannel,
-            ),
+                  player: _player,
+                  controller: _controller,
+                  onNextChannel: widget.onNextChannel,
+                  onPreviousChannel: widget.onPreviousChannel,
+                ),
             transitionsBuilder:
                 (context, animation, secondaryAnimation, child) =>
-                FadeTransition(opacity: animation, child: child),
+                    FadeTransition(opacity: animation, child: child),
           ),
         )
         .whenComplete(() {
@@ -610,7 +619,9 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                         ),
                         SizedBox(width: isCompactIos ? 4 : 6),
                         Text(
-                          hasFiniteDuration ? _formatDuration(duration) : 'LIVE',
+                          hasFiniteDuration
+                              ? _formatDuration(duration)
+                              : 'LIVE',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: timeFontSize,
@@ -632,10 +643,12 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                                   padding: EdgeInsets.zero,
                                   tooltip: 'Back 10s',
                                   iconSize: iconSize,
-                                  icon: const Icon(Icons.replay_10, color: Colors.white),
-                                  onPressed: () => _seekBy(
-                                    const Duration(seconds: -10),
+                                  icon: const Icon(
+                                    Icons.replay_10,
+                                    color: Colors.white,
                                   ),
+                                  onPressed: () =>
+                                      _seekBy(const Duration(seconds: -10)),
                                 ),
                               ),
                               SizedBox(width: isCompactIos ? 2 : 4),
@@ -644,7 +657,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                                 initialData: _player.state.playing,
                                 builder: (context, playingSnapshot) {
                                   final playing =
-                                      playingSnapshot.data ?? _player.state.playing;
+                                      playingSnapshot.data ??
+                                      _player.state.playing;
                                   return SizedBox(
                                     width: playButtonSize,
                                     height: playButtonSize,
@@ -671,10 +685,12 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                                   padding: EdgeInsets.zero,
                                   tooltip: 'Forward 10s',
                                   iconSize: iconSize,
-                                  icon: const Icon(Icons.forward_10, color: Colors.white),
-                                  onPressed: () => _seekBy(
-                                    const Duration(seconds: 10),
+                                  icon: const Icon(
+                                    Icons.forward_10,
+                                    color: Colors.white,
                                   ),
+                                  onPressed: () =>
+                                      _seekBy(const Duration(seconds: 10)),
                                 ),
                               ),
                               SizedBox(width: isCompactIos ? 4 : 8),
@@ -683,7 +699,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                                 initialData: _player.state.volume,
                                 builder: (context, volumeSnapshot) {
                                   final volume =
-                                      volumeSnapshot.data ?? _player.state.volume;
+                                      volumeSnapshot.data ??
+                                      _player.state.volume;
                                   final muted = volume <= 0.0;
                                   return SizedBox(
                                     width: smallButtonSize,
@@ -693,7 +710,9 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                                       tooltip: muted ? 'Unmute' : 'Mute',
                                       iconSize: iconSize,
                                       icon: Icon(
-                                        muted ? Icons.volume_off : Icons.volume_up,
+                                        muted
+                                            ? Icons.volume_off
+                                            : Icons.volume_up,
                                         color: Colors.white,
                                       ),
                                       onPressed: _toggleMute,
@@ -712,7 +731,10 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                               padding: EdgeInsets.zero,
                               tooltip: 'Fullscreen',
                               iconSize: iconSize,
-                              icon: const Icon(Icons.fullscreen, color: Colors.white),
+                              icon: const Icon(
+                                Icons.fullscreen,
+                                color: Colors.white,
+                              ),
                               onPressed: _enterFullscreen,
                             ),
                           ),
@@ -731,6 +753,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   @override
   Widget build(BuildContext context) {
     final isTv = isAndroidTv(context);
+    final hasTvFocus = _tvFullscreenFocusNode?.hasFocus ?? false;
 
     final playerWidget = ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -753,7 +776,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                     ),
                   ),
                 // Nav arrows (non-fullscreen) with auto-hide
-                if (widget.onPreviousChannel != null)
+                if (!isTv && widget.onPreviousChannel != null)
                   Positioned(
                     left: 8,
                     top: 50,
@@ -775,7 +798,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                       ),
                     ),
                   ),
-                if (widget.onNextChannel != null)
+                if (!isTv && widget.onNextChannel != null)
                   Positioned(
                     right: 8,
                     top: 50,
@@ -797,17 +820,55 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                       ),
                     ),
                   ),
-                // Bottom control bar (non-fullscreen)
-                Positioned(
-                  left: 8,
-                  right: 8,
-                  bottom: 8,
-                  child: AnimatedOpacity(
-                    opacity: _controlsVisibleNonFullscreen ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    child: _buildControlBar(),
+                // Bottom control bar (non-fullscreen) — hidden from D-pad focus on TV
+                if (!isTv)
+                  Positioned(
+                    left: 8,
+                    right: 8,
+                    bottom: 8,
+                    child: AnimatedOpacity(
+                      opacity: _controlsVisibleNonFullscreen ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: _buildControlBar(),
+                    ),
                   ),
-                ),
+                if (isTv)
+                  Positioned(
+                    right: 12,
+                    bottom: 12,
+                    child: Focus(
+                      focusNode: _tvFullscreenFocusNode,
+                      autofocus: true,
+                      onKeyEvent: (node, event) {
+                        if (event is KeyDownEvent &&
+                            (event.logicalKey == LogicalKeyboardKey.select ||
+                                event.logicalKey == LogicalKeyboardKey.enter)) {
+                          _enterFullscreen();
+                          return KeyEventResult.handled;
+                        }
+                        return KeyEventResult.ignored;
+                      },
+                      child: GestureDetector(
+                        onTap: _enterFullscreen,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 120),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: hasTvFocus ? Colors.white30 : Colors.black54,
+                            borderRadius: BorderRadius.circular(8),
+                            border: hasTvFocus
+                                ? Border.all(color: Colors.white, width: 2)
+                                : null,
+                          ),
+                          child: const Icon(
+                            Icons.fullscreen,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -815,62 +876,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       ),
     );
 
-    final playerWithNav = playerWidget;
-
     // On non-Android-TV platforms just return the player as-is.
-    if (!isTv) return playerWithNav; 
-
-    // On Android TV: overlay a focusable fullscreen button in the corner so
-    // the user can reach it with the D-pad and press OK to go fullscreen.
-    return Stack(
-      children: [
-        playerWithNav,
-        Positioned(
-          right: 8,
-          bottom: 8,
-          child: Focus(
-            autofocus: false,
-            child: Builder(
-              builder: (context) {
-                final hasFocus = Focus.of(context).hasFocus;
-                return Tooltip(
-                  message: 'Fullscreen',
-                  child: InkWell(
-                    focusColor: Colors.white24,
-                    onTap: _enterFullscreen,
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: hasFocus ? Colors.white30 : Colors.black54,
-                        borderRadius: BorderRadius.circular(4),
-                        border: hasFocus
-                            ? Border.all(color: Colors.white, width: 2)
-                            : null,
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.fullscreen, color: Colors.white, size: 16),
-                          SizedBox(width: 4),
-                          Text(
-                            'OK',
-                            style: TextStyle(color: Colors.white, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      ],
-    );
+    return playerWidget;
   }
 
   Widget _buildPlayer() {
@@ -939,17 +946,208 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
   double _lastNonZeroVolume = 100.0;
   bool _controlsVisible = true;
   Timer? _hideControlsTimer;
+  FocusNode? _tvFocusNode;
+  FocusNode? _tvPreviousChannelFocusNode;
+  FocusNode? _tvTimelineFocusNode;
+  FocusNode? _tvBack10FocusNode;
+  FocusNode? _tvPlayPauseFocusNode;
+  FocusNode? _tvForward10FocusNode;
+  FocusNode? _tvMuteFocusNode;
+  FocusNode? _tvNextChannelFocusNode;
+  FocusNode? _tvExitFullscreenFocusNode;
+  bool _tvControlsMode = false;
 
   @override
   void initState() {
     super.initState();
+    if (Platform.isAndroid) {
+      _tvFocusNode = FocusNode();
+      _tvPreviousChannelFocusNode = FocusNode();
+      _tvTimelineFocusNode = FocusNode();
+      _tvBack10FocusNode = FocusNode();
+      _tvPlayPauseFocusNode = FocusNode();
+      _tvForward10FocusNode = FocusNode();
+      _tvMuteFocusNode = FocusNode();
+      _tvNextChannelFocusNode = FocusNode();
+      _tvExitFullscreenFocusNode = FocusNode();
+      for (final node in _tvControlNodes()) {
+        node?.addListener(_onAnyTvFocusChange);
+      }
+    }
     _resetHideControlsTimer();
   }
 
   @override
   void dispose() {
     _hideControlsTimer?.cancel();
+    for (final node in _tvControlNodes()) {
+      node?.removeListener(_onAnyTvFocusChange);
+    }
+    _tvFocusNode?.dispose();
+    _tvPreviousChannelFocusNode?.dispose();
+    _tvTimelineFocusNode?.dispose();
+    _tvBack10FocusNode?.dispose();
+    _tvPlayPauseFocusNode?.dispose();
+    _tvForward10FocusNode?.dispose();
+    _tvMuteFocusNode?.dispose();
+    _tvNextChannelFocusNode?.dispose();
+    _tvExitFullscreenFocusNode?.dispose();
     super.dispose();
+  }
+
+  void _onAnyTvFocusChange() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  bool _hasFocusedFullscreenControl() {
+    return (_tvPreviousChannelFocusNode?.hasFocus ?? false) ||
+        (_tvTimelineFocusNode?.hasFocus ?? false) ||
+        (_tvBack10FocusNode?.hasFocus ?? false) ||
+        (_tvPlayPauseFocusNode?.hasFocus ?? false) ||
+        (_tvForward10FocusNode?.hasFocus ?? false) ||
+        (_tvMuteFocusNode?.hasFocus ?? false) ||
+        (_tvNextChannelFocusNode?.hasFocus ?? false) ||
+        (_tvExitFullscreenFocusNode?.hasFocus ?? false);
+  }
+
+  List<FocusNode?> _tvControlNodes() {
+    return [
+      _tvPreviousChannelFocusNode,
+      _tvTimelineFocusNode,
+      _tvBack10FocusNode,
+      _tvPlayPauseFocusNode,
+      _tvForward10FocusNode,
+      _tvMuteFocusNode,
+      _tvNextChannelFocusNode,
+      _tvExitFullscreenFocusNode,
+    ];
+  }
+
+  List<FocusNode> _enabledBottomControlNodes() {
+    final nodes = <FocusNode>[];
+    if (_tvBack10FocusNode != null) nodes.add(_tvBack10FocusNode!);
+    if (_tvPlayPauseFocusNode != null) nodes.add(_tvPlayPauseFocusNode!);
+    if (_tvForward10FocusNode != null) nodes.add(_tvForward10FocusNode!);
+    if (_tvMuteFocusNode != null) nodes.add(_tvMuteFocusNode!);
+    if (_tvExitFullscreenFocusNode != null) {
+      nodes.add(_tvExitFullscreenFocusNode!);
+    }
+    return nodes;
+  }
+
+  bool _isSideChannelFocusActive() {
+    return (_tvPreviousChannelFocusNode?.hasFocus ?? false) ||
+        (_tvNextChannelFocusNode?.hasFocus ?? false);
+  }
+
+  bool _isTimelineFocusActive() {
+    return _tvTimelineFocusNode?.hasFocus ?? false;
+  }
+
+  bool _isBottomControlFocusActive() {
+    return (_tvBack10FocusNode?.hasFocus ?? false) ||
+        (_tvPlayPauseFocusNode?.hasFocus ?? false) ||
+        (_tvForward10FocusNode?.hasFocus ?? false) ||
+        (_tvMuteFocusNode?.hasFocus ?? false) ||
+        (_tvExitFullscreenFocusNode?.hasFocus ?? false);
+  }
+
+  void _focusPlayPauseControl() {
+    (_tvPlayPauseFocusNode ?? _tvFocusNode)?.requestFocus();
+  }
+
+  void _focusTimelineControl() {
+    (_tvTimelineFocusNode ?? _tvPlayPauseFocusNode ?? _tvFocusNode)
+        ?.requestFocus();
+  }
+
+  bool _focusPreferredSideChannelControl() {
+    final rightBias =
+        (_tvNextChannelFocusNode?.hasFocus ?? false) ||
+        (_tvForward10FocusNode?.hasFocus ?? false) ||
+        (_tvMuteFocusNode?.hasFocus ?? false) ||
+        (_tvExitFullscreenFocusNode?.hasFocus ?? false);
+
+    if (rightBias && widget.onNextChannel != null) {
+      _tvNextChannelFocusNode?.requestFocus();
+      return true;
+    }
+    if (!rightBias && widget.onPreviousChannel != null) {
+      _tvPreviousChannelFocusNode?.requestFocus();
+      return true;
+    }
+
+    if (widget.onNextChannel != null) {
+      _tvNextChannelFocusNode?.requestFocus();
+      return true;
+    }
+    if (widget.onPreviousChannel != null) {
+      _tvPreviousChannelFocusNode?.requestFocus();
+      return true;
+    }
+    return false;
+  }
+
+  bool _moveBottomControlFocus({required bool forward}) {
+    final nodes = _enabledBottomControlNodes();
+    if (nodes.isEmpty) return false;
+    var currentIndex = nodes.indexWhere(
+      (node) => node.hasPrimaryFocus || node.hasFocus,
+    );
+    if (currentIndex < 0) {
+      currentIndex = 1; // default to Play/Pause if focus is unclear
+    }
+    final nextIndex = forward
+        ? (currentIndex + 1).clamp(0, nodes.length - 1)
+        : (currentIndex - 1).clamp(0, nodes.length - 1);
+    if (nextIndex == currentIndex) return false;
+    nodes[nextIndex].requestFocus();
+    return true;
+  }
+
+  bool _moveSideChannelFocus({required bool forward}) {
+    final nodes = <FocusNode>[];
+    if (widget.onPreviousChannel != null &&
+        _tvPreviousChannelFocusNode != null) {
+      nodes.add(_tvPreviousChannelFocusNode!);
+    }
+    if (widget.onNextChannel != null && _tvNextChannelFocusNode != null) {
+      nodes.add(_tvNextChannelFocusNode!);
+    }
+    if (nodes.length < 2) return false;
+    final currentIndex = nodes.indexWhere(
+      (node) => node.hasPrimaryFocus || node.hasFocus,
+    );
+    if (currentIndex < 0) {
+      nodes.first.requestFocus();
+      return true;
+    }
+    final nextIndex = forward ? currentIndex + 1 : currentIndex - 1;
+    if (nextIndex < 0 || nextIndex >= nodes.length) return false;
+    nodes[nextIndex].requestFocus();
+    return true;
+  }
+
+  Widget _buildTvFocusFrame({
+    required FocusNode? focusNode,
+    required Widget child,
+  }) {
+    final focused = focusNode?.hasFocus ?? false;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: focused
+            ? Colors.white.withValues(alpha: 0.14)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        border: focused
+            ? Border.all(color: Colors.white, width: 2)
+            : Border.all(color: Colors.transparent, width: 2),
+      ),
+      child: child,
+    );
   }
 
   void _resetHideControlsTimer() {
@@ -957,9 +1155,12 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
     if (!mounted) return;
     setState(() => _controlsVisible = true);
     _hideControlsTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted) {
-        setState(() => _controlsVisible = false);
+      if (!mounted) return;
+      if (isAndroidTv(context)) {
+        _tvControlsMode = false;
+        _tvFocusNode?.requestFocus();
       }
+      setState(() => _controlsVisible = false);
     });
   }
 
@@ -1011,8 +1212,9 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
   @override
   Widget build(BuildContext context) {
     final safePadding = MediaQuery.paddingOf(context);
+    final isTv = isAndroidTv(context);
 
-    return Scaffold(
+    Widget scaffold = Scaffold(
       backgroundColor: Colors.black,
       body: MouseRegion(
         onEnter: (_) => _showControls(),
@@ -1024,57 +1226,78 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
             children: [
               // Video
               Positioned.fill(
-                child: Center(
-                  child: Video(
-                    controller: widget.controller,
-                    controls: NoVideoControls,
-                    fit: BoxFit.contain,
-                    pauseUponEnteringBackgroundMode: !Platform.isIOS,
-                    resumeUponEnteringForegroundMode: true,
-                  ),
+                child: StreamBuilder<bool>(
+                  stream: widget.player.stream.playing,
+                  initialData: widget.player.state.playing,
+                  builder: (context, snapshot) {
+                    final hasStartedPlayback =
+                        (snapshot.data ?? false) ||
+                        widget.player.state.position > Duration.zero;
+                    return Center(
+                      child: hasStartedPlayback
+                          ? Video(
+                              controller: widget.controller,
+                              controls: NoVideoControls,
+                              fit: BoxFit.contain,
+                              pauseUponEnteringBackgroundMode: !Platform.isIOS,
+                              resumeUponEnteringForegroundMode: true,
+                            )
+                          : const SizedBox(
+                              width: 40,
+                              height: 40,
+                              child: CircularProgressIndicator(),
+                            ),
+                    );
+                  },
                 ),
               ),
-              // Left arrow with auto-hide
               if (widget.onPreviousChannel != null)
                 Positioned(
                   left: safePadding.left + 8,
                   top: 0,
                   bottom: 0,
-                  width: 40,
+                  width: 52,
                   child: AnimatedOpacity(
                     opacity: _controlsVisible ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 300),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: widget.onPreviousChannel,
-                      child: const Center(
-                        child: Icon(
-                          Icons.chevron_left,
-                          color: Colors.white,
-                          size: 34,
+                    child: Center(
+                      child: _buildTvFocusFrame(
+                        focusNode: isTv ? _tvPreviousChannelFocusNode : null,
+                        child: IconButton(
+                          tooltip: 'Previous channel',
+                          focusNode: isTv ? _tvPreviousChannelFocusNode : null,
+                          onPressed: widget.onPreviousChannel,
+                          icon: const Icon(
+                            Icons.chevron_left,
+                            color: Colors.white,
+                            size: 34,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              // Right arrow with auto-hide
               if (widget.onNextChannel != null)
                 Positioned(
                   right: safePadding.right + 8,
                   top: 0,
                   bottom: 0,
-                  width: 40,
+                  width: 52,
                   child: AnimatedOpacity(
                     opacity: _controlsVisible ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 300),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: widget.onNextChannel,
-                      child: const Center(
-                        child: Icon(
-                          Icons.chevron_right,
-                          color: Colors.white,
-                          size: 34,
+                    child: Center(
+                      child: _buildTvFocusFrame(
+                        focusNode: isTv ? _tvNextChannelFocusNode : null,
+                        child: IconButton(
+                          tooltip: 'Next channel',
+                          focusNode: isTv ? _tvNextChannelFocusNode : null,
+                          onPressed: widget.onNextChannel,
+                          icon: const Icon(
+                            Icons.chevron_right,
+                            color: Colors.white,
+                            size: 34,
+                          ),
                         ),
                       ),
                     ),
@@ -1088,7 +1311,7 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                 child: AnimatedOpacity(
                   opacity: _controlsVisible ? 1.0 : 0.0,
                   duration: const Duration(milliseconds: 300),
-                  child: _buildFullscreenControlBar(),
+                  child: _buildFullscreenControlBar(isTv: isTv),
                 ),
               ),
             ],
@@ -1096,9 +1319,121 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
         ),
       ),
     );
+
+    if (!isTv) return scaffold;
+
+    // On Android TV: wrap in a focusable widget so D-pad keys are delivered
+    // here instead of to child widgets (Slider, buttons).
+    return Focus(
+      focusNode: _tvFocusNode,
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+          return KeyEventResult.ignored;
+        }
+        final controlFocused = _hasFocusedFullscreenControl();
+        if ((event.logicalKey == LogicalKeyboardKey.arrowDown ||
+                event.logicalKey == LogicalKeyboardKey.arrowUp) &&
+            !_tvControlsMode &&
+            !controlFocused) {
+          _showControls();
+          _tvControlsMode = true;
+          _focusPlayPauseControl();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+            (_tvControlsMode || controlFocused)) {
+          _showControls();
+          if (_isSideChannelFocusActive()) {
+            _focusTimelineControl();
+            return KeyEventResult.handled;
+          }
+          if (_isTimelineFocusActive()) {
+            _focusPlayPauseControl();
+            return KeyEventResult.handled;
+          }
+          if (!_isBottomControlFocusActive()) {
+            _focusPlayPauseControl();
+            return KeyEventResult.handled;
+          }
+          _focusPlayPauseControl();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
+            (_tvControlsMode || controlFocused)) {
+          _showControls();
+          if (_isSideChannelFocusActive()) {
+            _tvControlsMode = false;
+            _tvFocusNode?.requestFocus();
+            return KeyEventResult.handled;
+          }
+          if (_isTimelineFocusActive()) {
+            final movedToSide = _focusPreferredSideChannelControl();
+            if (!movedToSide) {
+              _tvControlsMode = false;
+              _tvFocusNode?.requestFocus();
+            }
+            return KeyEventResult.handled;
+          }
+          _focusTimelineControl();
+          return KeyEventResult.handled;
+        }
+        if (_tvControlsMode || controlFocused) {
+          _showControls();
+          if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+            if (_isSideChannelFocusActive()) {
+              _moveSideChannelFocus(forward: false);
+              return KeyEventResult.handled;
+            }
+            if (_isTimelineFocusActive()) {
+              _seekBy(const Duration(seconds: -10));
+              return KeyEventResult.handled;
+            }
+            _moveBottomControlFocus(forward: false);
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+            if (_isSideChannelFocusActive()) {
+              _moveSideChannelFocus(forward: true);
+              return KeyEventResult.handled;
+            }
+            if (_isTimelineFocusActive()) {
+              _seekBy(const Duration(seconds: 10));
+              return KeyEventResult.handled;
+            }
+            _moveBottomControlFocus(forward: true);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+          _seekBy(const Duration(seconds: -10));
+          _showControls();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          _seekBy(const Duration(seconds: 10));
+          _showControls();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.select ||
+            event.logicalKey == LogicalKeyboardKey.enter) {
+          _togglePlayPause();
+          _showControls();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+            event.logicalKey == LogicalKeyboardKey.arrowDown) {
+          _showControls();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: scaffold,
+    );
   }
 
-  Widget _buildFullscreenControlBar() {
+  Widget _buildFullscreenControlBar({bool isTv = false}) {
     return StreamBuilder<Duration>(
       stream: widget.player.stream.position,
       initialData: widget.player.state.position,
@@ -1130,51 +1465,63 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Text(
-                          _formatDuration(position),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
+                    _buildTvFocusFrame(
+                      focusNode: isTv ? _tvTimelineFocusNode : null,
+                      child: Row(
+                        children: [
+                          Text(
+                            _formatDuration(position),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: SliderTheme(
-                            data: SliderTheme.of(context).copyWith(
-                              trackHeight: 3,
-                              thumbShape: const RoundSliderThumbShape(
-                                enabledThumbRadius: 6,
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Focus(
+                              focusNode: isTv ? _tvTimelineFocusNode : null,
+                              canRequestFocus: isTv,
+                              skipTraversal: true,
+                              descendantsAreFocusable: false,
+                              child: ExcludeFocus(
+                                excluding: isTv,
+                                child: SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    trackHeight: 3,
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 6,
+                                    ),
+                                  ),
+                                  child: Slider(
+                                    value: currentMs,
+                                    min: 0,
+                                    max: maxMs,
+                                    onChanged: !hasFiniteDuration
+                                        ? null
+                                        : (value) {
+                                            widget.player.seek(
+                                              Duration(
+                                                milliseconds: value.round(),
+                                              ),
+                                            );
+                                          },
+                                  ),
+                                ),
                               ),
                             ),
-                            child: Slider(
-                              value: currentMs,
-                              min: 0,
-                              max: maxMs,
-                              onChanged: !hasFiniteDuration
-                                  ? null
-                                  : (value) {
-                                      widget.player.seek(
-                                        Duration(
-                                          milliseconds: value.round(),
-                                        ),
-                                      );
-                                    },
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            hasFiniteDuration
+                                ? _formatDuration(duration)
+                                : 'LIVE',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          hasFiniteDuration
-                              ? _formatDuration(duration)
-                              : 'LIVE',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -1183,14 +1530,17 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              IconButton(
-                                tooltip: 'Back 10s',
-                                icon: const Icon(
-                                  Icons.replay_10,
-                                  color: Colors.white,
-                                ),
-                                onPressed: () => _seekBy(
-                                  const Duration(seconds: -10),
+                              _buildTvFocusFrame(
+                                focusNode: isTv ? _tvBack10FocusNode : null,
+                                child: IconButton(
+                                  tooltip: 'Back 10s',
+                                  focusNode: isTv ? _tvBack10FocusNode : null,
+                                  icon: const Icon(
+                                    Icons.replay_10,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: () =>
+                                      _seekBy(const Duration(seconds: -10)),
                                 ),
                               ),
                               const SizedBox(width: 4),
@@ -1199,29 +1549,43 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                                 initialData: widget.player.state.playing,
                                 builder: (context, playingSnapshot) {
                                   final playing =
-                                      playingSnapshot.data ?? widget.player.state.playing;
-                                  return IconButton(
-                                    tooltip: playing ? 'Pause' : 'Play',
-                                    icon: Icon(
-                                      playing
-                                          ? Icons.pause_circle_filled
-                                          : Icons.play_circle_fill,
-                                      color: Colors.white,
-                                      size: 34,
+                                      playingSnapshot.data ??
+                                      widget.player.state.playing;
+                                  return _buildTvFocusFrame(
+                                    focusNode: isTv
+                                        ? _tvPlayPauseFocusNode
+                                        : null,
+                                    child: IconButton(
+                                      tooltip: playing ? 'Pause' : 'Play',
+                                      focusNode: isTv
+                                          ? _tvPlayPauseFocusNode
+                                          : null,
+                                      icon: Icon(
+                                        playing
+                                            ? Icons.pause_circle_filled
+                                            : Icons.play_circle_fill,
+                                        color: Colors.white,
+                                        size: 34,
+                                      ),
+                                      onPressed: _togglePlayPause,
                                     ),
-                                    onPressed: _togglePlayPause,
                                   );
                                 },
                               ),
                               const SizedBox(width: 4),
-                              IconButton(
-                                tooltip: 'Forward 10s',
-                                icon: const Icon(
-                                  Icons.forward_10,
-                                  color: Colors.white,
-                                ),
-                                onPressed: () => _seekBy(
-                                  const Duration(seconds: 10),
+                              _buildTvFocusFrame(
+                                focusNode: isTv ? _tvForward10FocusNode : null,
+                                child: IconButton(
+                                  tooltip: 'Forward 10s',
+                                  focusNode: isTv
+                                      ? _tvForward10FocusNode
+                                      : null,
+                                  icon: const Icon(
+                                    Icons.forward_10,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: () =>
+                                      _seekBy(const Duration(seconds: 10)),
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -1230,28 +1594,39 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                                 initialData: widget.player.state.volume,
                                 builder: (context, volumeSnapshot) {
                                   final volume =
-                                      volumeSnapshot.data ?? widget.player.state.volume;
+                                      volumeSnapshot.data ??
+                                      widget.player.state.volume;
                                   final muted = volume <= 0.0;
-                                  return IconButton(
-                                    tooltip: muted ? 'Unmute' : 'Mute',
-                                    icon: Icon(
-                                      muted ? Icons.volume_off : Icons.volume_up,
-                                      color: Colors.white,
+                                  return _buildTvFocusFrame(
+                                    focusNode: isTv ? _tvMuteFocusNode : null,
+                                    child: IconButton(
+                                      tooltip: muted ? 'Unmute' : 'Mute',
+                                      focusNode: isTv ? _tvMuteFocusNode : null,
+                                      icon: Icon(
+                                        muted
+                                            ? Icons.volume_off
+                                            : Icons.volume_up,
+                                        color: Colors.white,
+                                      ),
+                                      onPressed: _toggleMute,
                                     ),
-                                    onPressed: _toggleMute,
                                   );
                                 },
                               ),
                             ],
                           ),
                         ),
-                        IconButton(
-                          tooltip: 'Exit Fullscreen',
-                          icon: const Icon(
-                            Icons.fullscreen_exit,
-                            color: Colors.white,
+                        _buildTvFocusFrame(
+                          focusNode: isTv ? _tvExitFullscreenFocusNode : null,
+                          child: IconButton(
+                            tooltip: 'Exit Fullscreen',
+                            focusNode: isTv ? _tvExitFullscreenFocusNode : null,
+                            icon: const Icon(
+                              Icons.fullscreen_exit,
+                              color: Colors.white,
+                            ),
+                            onPressed: () => Navigator.of(context).pop(),
                           ),
-                          onPressed: () => Navigator.of(context).pop(),
                         ),
                       ],
                     ),

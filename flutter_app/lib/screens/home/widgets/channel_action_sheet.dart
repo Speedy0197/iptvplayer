@@ -23,61 +23,48 @@ class ChannelActionSheet extends StatelessWidget {
     final isFav = channel.isFavorite;
     final theme = Theme.of(context);
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
-              child: Text(
-                channel.name,
-                style: theme.textTheme.titleLarge,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            _ActionButton(
-              icon: Icons.play_arrow,
-              label: 'Play',
-              autofocus: true,
-              onPressed: () async {
-                Navigator.of(context).pop();
-                if (onPlay != null) {
-                  await onPlay!();
-                } else {
-                  await store.play(channel);
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            _ActionButton(
-              icon: isFav ? Icons.star : Icons.star_border,
-              iconColor: isFav ? Colors.amber : null,
-              label: isFav ? 'Remove from favorites' : 'Add to favorites',
-              onPressed: () async {
-                Navigator.of(context).pop();
-                try {
-                  await store.toggleFavorite(channel);
-                } on ApiException catch (e) {
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(e.message)),
-                  );
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            _ActionButton(
-              icon: Icons.close,
-              label: 'Cancel',
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ],
+    return _ActionSheetBody(
+      title: channel.name,
+      titleStyle: theme.textTheme.titleLarge,
+      children: [
+        _ActionButton(
+          icon: Icons.play_arrow,
+          label: 'Play',
+          autofocus: true,
+          onPressed: () async {
+            await _dismissSheetThenRun(context, () async {
+              if (onPlay != null) {
+                await onPlay!();
+              } else {
+                await store.play(channel);
+              }
+            });
+          },
         ),
-      ),
+        const SizedBox(height: 8),
+        _ActionButton(
+          icon: isFav ? Icons.star : Icons.star_border,
+          iconColor: isFav ? Colors.amber : null,
+          label: isFav ? 'Remove from favorites' : 'Add to favorites',
+          onPressed: () async {
+            Navigator.of(context).pop();
+            try {
+              await store.toggleFavorite(channel);
+            } on ApiException catch (e) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(e.message)));
+            }
+          },
+        ),
+        const SizedBox(height: 8),
+        _ActionButton(
+          icon: Icons.close,
+          label: 'Cancel',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ],
     );
   }
 }
@@ -100,8 +87,64 @@ class GroupActionSheet extends StatelessWidget {
     final isFav = group.isFavorite;
     final theme = Theme.of(context);
 
+    return _ActionSheetBody(
+      title: group.name,
+      titleStyle: theme.textTheme.titleLarge,
+      children: [
+        if (onOpen != null) ...[
+          _ActionButton(
+            icon: Icons.folder_open,
+            label: 'Open group',
+            autofocus: true,
+            onPressed: () async {
+              await _dismissSheetThenRun(context, onOpen!);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+        _ActionButton(
+          icon: isFav ? Icons.star : Icons.star_border,
+          iconColor: isFav ? Colors.amber : null,
+          label: isFav ? 'Remove from favorites' : 'Add to favorites',
+          autofocus: onOpen == null,
+          onPressed: () async {
+            Navigator.of(context).pop();
+            try {
+              await store.toggleFavoriteGroup(group);
+            } on ApiException catch (e) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(e.message)));
+            }
+          },
+        ),
+        const SizedBox(height: 8),
+        _ActionButton(
+          icon: Icons.close,
+          label: 'Cancel',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ],
+    );
+  }
+}
+
+class _ActionSheetBody extends StatelessWidget {
+  final String title;
+  final TextStyle? titleStyle;
+  final List<Widget> children;
+
+  const _ActionSheetBody({
+    required this.title,
+    required this.titleStyle,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -110,47 +153,13 @@ class GroupActionSheet extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
               child: Text(
-                group.name,
-                style: theme.textTheme.titleLarge,
+                title,
+                style: titleStyle,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            if (onOpen != null) ...[
-              _ActionButton(
-                icon: Icons.folder_open,
-                label: 'Open group',
-                autofocus: true,
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  await onOpen!();
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-            _ActionButton(
-              icon: isFav ? Icons.star : Icons.star_border,
-              iconColor: isFav ? Colors.amber : null,
-              label: isFav ? 'Remove from favorites' : 'Add to favorites',
-              autofocus: onOpen == null,
-              onPressed: () async {
-                Navigator.of(context).pop();
-                try {
-                  await store.toggleFavoriteGroup(group);
-                } on ApiException catch (e) {
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(e.message)),
-                  );
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            _ActionButton(
-              icon: Icons.close,
-              label: 'Cancel',
-              onPressed: () => Navigator.of(context).pop(),
-            ),
+            ...children,
           ],
         ),
       ),
@@ -199,6 +208,16 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
+Future<void> _dismissSheetThenRun(
+  BuildContext context,
+  Future<void> Function() action,
+) async {
+  Navigator.of(context).pop();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    action();
+  });
+}
+
 Future<void> showChannelActionSheet(
   BuildContext context, {
   required Channel channel,
@@ -207,12 +226,10 @@ Future<void> showChannelActionSheet(
 }) {
   return showModalBottomSheet<void>(
     context: context,
+    isScrollControlled: true,
     showDragHandle: true,
-    builder: (ctx) => ChannelActionSheet(
-      channel: channel,
-      store: store,
-      onPlay: onPlay,
-    ),
+    builder: (ctx) =>
+        ChannelActionSheet(channel: channel, store: store, onPlay: onPlay),
   );
 }
 
@@ -224,11 +241,9 @@ Future<void> showGroupActionSheet(
 }) {
   return showModalBottomSheet<void>(
     context: context,
+    isScrollControlled: true,
     showDragHandle: true,
-    builder: (ctx) => GroupActionSheet(
-      group: group,
-      store: store,
-      onOpen: onOpen,
-    ),
+    builder: (ctx) =>
+        GroupActionSheet(group: group, store: store, onOpen: onOpen),
   );
 }

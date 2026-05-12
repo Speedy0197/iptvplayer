@@ -2,13 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/auth_store.dart';
+import '../dialogs/confirm_dialog.dart';
 import '../home_types.dart';
 
 class HomeLeftMenu extends StatelessWidget {
   final HomeSection section;
   final ValueChanged<HomeSection> onChanged;
 
-  const HomeLeftMenu({super.key, required this.section, required this.onChanged});
+  const HomeLeftMenu({
+    super.key,
+    required this.section,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -50,24 +55,12 @@ class HomeLeftMenu extends StatelessWidget {
                 label: 'Logout',
                 child: InkResponse(
                   onTap: () async {
-                    final shouldLogout = await showDialog<bool>(
-                      context: context,
-                      builder: (dialogContext) => AlertDialog(
-                        title: const Text('Logout'),
-                        content: const Text('Are you sure you want to log out?'),
-                        actions: [
-                          TextButton(
-                            onPressed: () =>
-                                Navigator.of(dialogContext).pop(false),
-                            child: const Text('Cancel'),
-                          ),
-                          FilledButton(
-                            onPressed: () =>
-                                Navigator.of(dialogContext).pop(true),
-                            child: const Text('Logout'),
-                          ),
-                        ],
-                      ),
+                    final shouldLogout = await showConfirmDialog(
+                      context,
+                      title: 'Logout',
+                      message: 'Are you sure you want to log out?',
+                      confirmLabel: 'Logout',
+                      confirmIcon: Icons.logout,
                     );
 
                     if (shouldLogout == true && context.mounted) {

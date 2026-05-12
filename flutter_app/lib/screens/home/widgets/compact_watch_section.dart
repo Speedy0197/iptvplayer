@@ -8,7 +8,7 @@ import 'player_pane.dart';
 import '../home_types.dart';
 import 'watch_playlists_pane.dart';
 
-class CompactWatchSection extends StatelessWidget {
+class CompactWatchSection extends StatefulWidget {
   static const int viewPlaylists = 0;
   static const int viewGroups = 1;
   static const int viewChannels = 2;
@@ -19,6 +19,7 @@ class CompactWatchSection extends StatelessWidget {
   final int currentPage;
   final Future<void> Function(int page) onGoToPage;
   final ValueChanged<int> onPageChanged;
+  final FocusNode? initialFocusNode;
 
   const CompactWatchSection({
     super.key,
@@ -27,11 +28,80 @@ class CompactWatchSection extends StatelessWidget {
     required this.currentPage,
     required this.onGoToPage,
     required this.onPageChanged,
+    this.initialFocusNode,
   });
 
   @override
+  State<CompactWatchSection> createState() => _CompactWatchSectionState();
+}
+
+class _CompactWatchSectionState extends State<CompactWatchSection> {
+  late int _lastPage;
+  late final FocusNode _firstGroupFocusNode;
+  late final FocusNode _firstChannelFocusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastPage = widget.currentPage;
+    _firstGroupFocusNode = FocusNode(debugLabel: 'compactFirstGroup');
+    _firstChannelFocusNode = FocusNode(debugLabel: 'compactFirstChannel');
+  }
+
+  @override
+  void dispose() {
+    _firstGroupFocusNode.dispose();
+    _firstChannelFocusNode.dispose();
+    super.dispose();
+  }
+
+  FocusNode? _focusNodeForPage(int page) {
+    switch (page) {
+      case CompactWatchSection.viewGroups:
+        return _firstGroupFocusNode;
+      case CompactWatchSection.viewChannels:
+        return _firstChannelFocusNode;
+      default:
+        return null;
+    }
+  }
+
+  @override
+  void didUpdateWidget(CompactWatchSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.currentPage != _lastPage) {
+      _lastPage = widget.currentPage;
+      final focusNode = _focusNodeForPage(widget.currentPage);
+      if (focusNode == null) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Future<void>.delayed(kTabAnimation, () {
+          if (!mounted) return;
+          focusNode.requestFocus();
+        });
+      });
+    }
+    // When initialFocusNode changes (e.g., section switched), request focus on the correct page
+    if (widget.initialFocusNode != oldWidget.initialFocusNode &&
+        widget.initialFocusNode != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        // Give the widget tree time to build
+        Future<void>.delayed(const Duration(milliseconds: 150), () {
+          if (!mounted) return;
+          final focusNode = _focusNodeForPage(widget.currentPage);
+          if (focusNode != null && focusNode.canRequestFocus) {
+            FocusScope.of(context).requestFocus(focusNode);
+          }
+        });
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isSmallCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    final isSmallCompact =
+        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
 
     return Column(
       children: [
@@ -39,7 +109,7 @@ class CompactWatchSection extends StatelessWidget {
           width: isSmallCompact ? double.infinity : null,
           child: isSmallCompact
               ? CompactTabStrip(
-                  selectedIndex: currentPage,
+                  selectedIndex: widget.currentPage,
                   icons: const [
                     Icons.playlist_play,
                     Icons.folder_open,
@@ -47,63 +117,69 @@ class CompactWatchSection extends StatelessWidget {
                     Icons.smart_display,
                   ],
                   labels: const ['Playlists', 'Groups', 'Channels', 'Player'],
-                  onSelected: (index) => onGoToPage(index),
+                  onSelected: (index) => widget.onGoToPage(index),
                 )
               : SegmentedButton<int>(
                   showSelectedIcon: false,
                   segments: const [
                     ButtonSegment<int>(
-                      value: viewPlaylists,
+                      value: CompactWatchSection.viewPlaylists,
                       icon: Icon(Icons.playlist_play),
                       label: Text('Playlists'),
                     ),
                     ButtonSegment<int>(
-                      value: viewGroups,
+                      value: CompactWatchSection.viewGroups,
                       icon: Icon(Icons.folder_open),
                       label: Text('Groups'),
                     ),
                     ButtonSegment<int>(
-                      value: viewChannels,
+                      value: CompactWatchSection.viewChannels,
                       icon: Icon(Icons.tv),
                       label: Text('Channels'),
                     ),
                     ButtonSegment<int>(
-                      value: viewPlayer,
+                      value: CompactWatchSection.viewPlayer,
                       icon: Icon(Icons.smart_display),
                       label: Text('Player'),
                     ),
                   ],
-                  selected: {currentPage},
-                  onSelectionChanged: (next) => onGoToPage(next.first),
+                  selected: {widget.currentPage},
+                  onSelectionChanged: (next) => widget.onGoToPage(next.first),
                 ),
         ),
         const SizedBox(height: 10),
         Expanded(
           child: PageView(
-            controller: controller,
-            onPageChanged: onPageChanged,
+            controller: widget.controller,
+            physics: const NeverScrollableScrollPhysics(),
+            onPageChanged: widget.onPageChanged,
             children: [
               WatchPlaylistsPane(
-                store: store,
+                store: widget.store,
                 compact: true,
                 fullscreen: true,
                 mode: WatchBrowseMode.playlistsOnly,
-                onPlaylistSelected: () => onGoToPage(viewGroups),
+                onPlaylistSelected: () =>
+                    widget.onGoToPage(CompactWatchSection.viewGroups),
               ),
               WatchPlaylistsPane(
-                store: store,
+                store: widget.store,
                 compact: true,
                 fullscreen: true,
                 mode: WatchBrowseMode.groupsOnly,
-                onGroupSelected: () => onGoToPage(viewChannels),
+                initialItemFocusNode: _firstGroupFocusNode,
+                onGroupSelected: () =>
+                    widget.onGoToPage(CompactWatchSection.viewChannels),
               ),
               ChannelsPane(
-                store: store,
+                store: widget.store,
                 compact: true,
                 fullscreen: true,
-                onChannelSelected: () => onGoToPage(viewPlayer),
+                initialChannelFocusNode: _firstChannelFocusNode,
+                onChannelSelected: () =>
+                    widget.onGoToPage(CompactWatchSection.viewPlayer),
               ),
-              PlayerPane(store: store),
+              PlayerPane(store: widget.store),
             ],
           ),
         ),

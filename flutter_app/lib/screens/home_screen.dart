@@ -10,6 +10,7 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
 import '../services/playlist_store.dart';
+import 'home/dialogs/confirm_dialog.dart';
 import 'home/dialogs/playlist_dialog.dart';
 import 'home/home_types.dart';
 import 'home/widgets/channels_pane.dart';
@@ -39,6 +40,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _firstSearchResultFocusNode = FocusNode(
     debugLabel: 'firstSearchResult',
   );
+  late final FocusNode _watchSectionFocusNode;
+  late final FocusNode _favoritesSectionFocusNode;
+  late final FocusNode _playlistsSectionFocusNode;
   double _lastKeyboardInsetBottom = 0;
   HomeSection _section = HomeSection.watch;
   int _compactWatchView = 0;
@@ -60,6 +64,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _compactFavoritesController = PageController(
       initialPage: _compactFavoritesView,
     );
+    _watchSectionFocusNode = FocusNode(debugLabel: 'watchSection');
+    _favoritesSectionFocusNode = FocusNode(debugLabel: 'favoritesSection');
+    _playlistsSectionFocusNode = FocusNode(debugLabel: 'playlistsSection');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<PlaylistStore>().bootstrap();
     });
@@ -74,6 +81,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _searchFieldFocusNode.dispose();
     _searchBarActiveFocusNode.dispose();
     _firstSearchResultFocusNode.dispose();
+    _watchSectionFocusNode.dispose();
+    _favoritesSectionFocusNode.dispose();
+    _playlistsSectionFocusNode.dispose();
     super.dispose();
   }
 
@@ -161,22 +171,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _requestLogoutConfirmation() async {
-    final shouldLogout = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to log out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Logout'),
-          ),
-        ],
-      ),
+    final shouldLogout = await showConfirmDialog(
+      context,
+      title: 'Logout',
+      message: 'Are you sure you want to log out?',
+      confirmLabel: 'Logout',
+      confirmIcon: Icons.logout,
     );
 
     if (shouldLogout == true && mounted) {
@@ -731,9 +731,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _handleSectionChange(HomeSection next) {
+    // Unfocus the menu button first
+    FocusManager.instance.primaryFocus?.unfocus();
+    
     setState(() {
       _section = next;
-      if (next == HomeSection.favorites) {
+      if (next == HomeSection.watch) {
+        _compactWatchView = 0;
+      } else if (next == HomeSection.favorites) {
         _compactFavoritesView = 0;
       }
     });
@@ -753,10 +758,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildSection(BuildContext context, PlaylistStore store) {
     final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    final isTv = isAndroidTv(context);
 
     switch (_section) {
       case HomeSection.watch:
-        if (isCompact) {
+        // Use compact layout for mobile, tablets, and TV (space-efficient with tabs/pagination)
+        if (isCompact || isTv) {
           return CompactWatchSection(
             store: store,
             controller: _compactWatchController,
@@ -767,28 +774,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 setState(() => _compactWatchView = index);
               }
             },
+            initialFocusNode: _watchSectionFocusNode,
           );
         }
-        final isTv = isAndroidTv(context);
-        final playlistsWidth = isTv ? kTvPlaylistsColumnWidth : 280.0;
-        final channelsWidth = isTv ? kTvChannelsColumnWidth : 280.0;
+        final playlistsWidth = 280.0;
+        final channelsWidth = 280.0;
         return Row(
           children: [
             SizedBox(
               width: playlistsWidth,
-              child: WatchPlaylistsPane(store: store),
+              child: WatchPlaylistsPane(store: store, initialItemFocusNode: _watchSectionFocusNode),
             ),
             const SizedBox(width: 8),
             SizedBox(
               width: channelsWidth,
-              child: ChannelsPane(store: store),
+              child: ChannelsPane(store: store, initialChannelFocusNode: _watchSectionFocusNode),
             ),
             const SizedBox(width: 8),
             Expanded(child: PlayerPane(store: store)),
           ],
         );
       case HomeSection.favorites:
-        if (isCompact) {
+        // Use compact layout for mobile, tablets, and TV (space-efficient with tabs/pagination)
+        if (isCompact || isTv) {
           return CompactFavoritesSection(
             store: store,
             controller: _compactFavoritesController,
@@ -810,12 +818,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 );
               }
             },
+            initialFocusNode: _favoritesSectionFocusNode,
           );
         }
         return FavoritesView(
           store: store,
           onGroupTap: _openFavoriteGroup,
           onChannelTap: _openFavoriteChannel,
+          initialFocusNode: _favoritesSectionFocusNode,
         );
       case HomeSection.playlists:
         return PlaylistManagementView(
@@ -824,6 +834,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           onEdit: (p) => showPlaylistDialog(context, editing: p),
           onRefresh: _refreshPlaylistWithFeedback,
           onDelete: (p) => _confirmDeletePlaylist(context, p),
+          initialFocusNode: _playlistsSectionFocusNode,
         );
     }
   }

@@ -18,6 +18,7 @@ class TvFocusableTile extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
+  final FocusNode? focusNode;
   final bool autofocus;
   final EdgeInsetsGeometry margin;
 
@@ -26,8 +27,9 @@ class TvFocusableTile extends StatefulWidget {
     required this.child,
     required this.onTap,
     this.onLongPress,
+    this.focusNode,
     this.autofocus = false,
-    this.margin = const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+    this.margin = const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
   });
 
   @override
@@ -38,6 +40,13 @@ class _TvFocusableTileState extends State<TvFocusableTile> {
   bool _focused = false;
   Timer? _longPressTimer;
   bool _longPressFired = false;
+  bool _selectKeyDown = false;
+  DateTime? _selectPressedAt;
+
+  void _cancelLongPressTimer() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+  }
 
   @override
   void dispose() {
@@ -73,19 +82,19 @@ class _TvFocusableTileState extends State<TvFocusableTile> {
   }
 
   void _startLongPress() {
-    _cancelLongPress();
+    _cancelLongPressTimer();
     if (widget.onLongPress == null) return;
     _longPressFired = false;
     _longPressTimer = Timer(kTvLongPressDuration, () {
       if (!mounted) return;
       _longPressFired = true;
-      widget.onLongPress?.call();
     });
   }
 
   void _cancelLongPress() {
-    _longPressTimer?.cancel();
-    _longPressTimer = null;
+    _cancelLongPressTimer();
+    _selectKeyDown = false;
+    _selectPressedAt = null;
   }
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
@@ -93,13 +102,33 @@ class _TvFocusableTileState extends State<TvFocusableTile> {
       return KeyEventResult.ignored;
     }
     if (event is KeyDownEvent) {
+      if (_selectKeyDown) {
+        return KeyEventResult.handled;
+      }
+      _selectKeyDown = true;
+      _selectPressedAt = DateTime.now();
       _startLongPress();
       return KeyEventResult.handled;
     }
+    if (event is KeyRepeatEvent) {
+      // Ignore repeats so they don't reset the long-press timer.
+      return KeyEventResult.handled;
+    }
     if (event is KeyUpEvent) {
+      if (!_selectKeyDown) {
+        return KeyEventResult.handled;
+      }
+      final pressedAt = _selectPressedAt;
+      final heldLongEnough =
+          pressedAt != null &&
+          DateTime.now().difference(pressedAt) >= kTvLongPressDuration;
       final wasLong = _longPressFired;
+      final triggerLongPress =
+          widget.onLongPress != null && (wasLong || heldLongEnough);
       _cancelLongPress();
-      if (!wasLong) {
+      if (triggerLongPress) {
+        widget.onLongPress?.call();
+      } else if (!heldLongEnough) {
         widget.onTap();
       }
       return KeyEventResult.handled;
@@ -115,12 +144,13 @@ class _TvFocusableTileState extends State<TvFocusableTile> {
     return Padding(
       padding: widget.margin,
       child: Focus(
+        focusNode: widget.focusNode,
         autofocus: widget.autofocus,
         onFocusChange: _onFocusChange,
         onKeyEvent: _onKeyEvent,
         child: AnimatedScale(
           duration: const Duration(milliseconds: 120),
-          scale: _focused ? 1.03 : 1.0,
+          scale: 1.0,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
             decoration: BoxDecoration(
@@ -135,6 +165,7 @@ class _TvFocusableTileState extends State<TvFocusableTile> {
             ),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
+              excludeFromSemantics: true,
               onTap: widget.onTap,
               onLongPress: widget.onLongPress,
               child: widget.child,

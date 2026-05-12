@@ -12,6 +12,7 @@ class ChannelsPane extends StatelessWidget {
   final PlaylistStore store;
   final bool compact;
   final bool fullscreen;
+  final FocusNode? initialChannelFocusNode;
   final Future<void> Function()? onChannelSelected;
 
   const ChannelsPane({
@@ -19,6 +20,7 @@ class ChannelsPane extends StatelessWidget {
     required this.store,
     this.compact = false,
     this.fullscreen = false,
+    this.initialChannelFocusNode,
     this.onChannelSelected,
   });
 
@@ -43,6 +45,7 @@ class ChannelsPane extends StatelessWidget {
           onChannelSelected: onChannelSelected,
           isTv: isTv,
           autofocus: isTv && i == 0,
+          focusNode: i == 0 ? initialChannelFocusNode : null,
         ),
       );
     }
@@ -73,10 +76,7 @@ class ChannelsPane extends StatelessWidget {
             if (!compact || fullscreen)
               Expanded(child: buildList(shrinkWrap: false))
             else
-              SizedBox(
-                height: 360,
-                child: buildList(shrinkWrap: compact),
-              ),
+              SizedBox(height: 360, child: buildList(shrinkWrap: compact)),
           ],
         ),
       ),
@@ -90,6 +90,7 @@ class _ChannelTile extends StatelessWidget {
   final Future<void> Function()? onChannelSelected;
   final bool isTv;
   final bool autofocus;
+  final FocusNode? focusNode;
 
   const _ChannelTile({
     required this.channel,
@@ -97,6 +98,7 @@ class _ChannelTile extends StatelessWidget {
     required this.onChannelSelected,
     required this.isTv,
     required this.autofocus,
+    required this.focusNode,
   });
 
   Future<void> _play(BuildContext context) async {
@@ -115,9 +117,9 @@ class _ChannelTile extends StatelessWidget {
           await store.toggleFavorite(c);
         } on ApiException catch (e) {
           if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.message)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(e.message)));
         }
       },
       icon: Icon(
@@ -154,6 +156,7 @@ class _ChannelTile extends StatelessWidget {
     }
 
     return TvFocusableTile(
+      focusNode: focusNode,
       autofocus: autofocus,
       onTap: () => _play(context),
       onLongPress: () => showChannelActionSheet(
