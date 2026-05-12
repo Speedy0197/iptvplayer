@@ -7,6 +7,7 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'config/app_config.dart';
+import 'config/ui_constants.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/api_client.dart';
@@ -18,8 +19,22 @@ Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  if (Platform.isMacOS) {
+  if (Platform.isMacOS || Platform.isWindows) {
+    const minimumWindowSize = Size(kCompactBreakpoint + 1, 640);
     await windowManager.ensureInitialized();
+    await windowManager.waitUntilReadyToShow(
+      const WindowOptions(minimumSize: minimumWindowSize),
+      () async {
+        await windowManager.setMinimumSize(minimumWindowSize);
+        if (Platform.isMacOS) {
+          await windowManager.maximize();
+        } else if (Platform.isWindows) {
+          await windowManager.setFullScreen(true);
+        }
+        await windowManager.show();
+        await windowManager.focus();
+      },
+    );
   }
   
   MediaKit.ensureInitialized();

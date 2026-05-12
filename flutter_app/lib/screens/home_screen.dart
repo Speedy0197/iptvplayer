@@ -744,6 +744,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
     if (next == HomeSection.watch) {
       context.read<PlaylistStore>().fetchFavoriteGroups();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_compactWatchController.hasClients) return;
+        _compactWatchController.jumpToPage(CompactWatchSection.viewPlaylists);
+      });
     }
     if (next == HomeSection.favorites) {
       final store = context.read<PlaylistStore>();
