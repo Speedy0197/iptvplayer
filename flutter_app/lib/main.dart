@@ -29,17 +29,17 @@ Future<void> main() async {
         if (Platform.isMacOS) {
           await windowManager.maximize();
         } else if (Platform.isWindows) {
-          await windowManager.setFullScreen(true);
+          await windowManager.maximize();
         }
         await windowManager.show();
         await windowManager.focus();
       },
     );
   }
-  
+
   MediaKit.ensureInitialized();
   final api = ApiClient(baseUrl: AppConfig.apiBase);
-  
+
   FlutterNativeSplash.remove();
   runApp(IptvFlutterApp(api: api));
 }
@@ -145,10 +145,9 @@ class _AuthGateState extends State<_AuthGate> with WidgetsBindingObserver {
     if (_checkingVersion) return;
     _checkingVersion = true;
     try {
-      final result =
-          await VersionService(
-            latestVersionUrl: AppConfig.latestVersionUrl,
-          ).check();
+      final result = await VersionService(
+        latestVersionUrl: AppConfig.latestVersionUrl,
+      ).check();
       if (!mounted) return;
       if (result != null && result.updateRequired) {
         await showForceUpdateDialog(context, result.latestVersion);
