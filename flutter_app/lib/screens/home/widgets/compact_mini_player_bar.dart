@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../config/device_utils.dart';
 import '../../../models/models.dart';
+import '../../../widgets/adaptive_single_line_text.dart';
 import 'channel_logo_avatar.dart';
 
 class CompactMiniPlayerBar extends StatelessWidget {
@@ -19,6 +21,9 @@ class CompactMiniPlayerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = isIosOrAndroidPhone(context);
+    final showDesktopTooltips = isMacOrWindowsDesktop();
+
     return Material(
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: SafeArea(
@@ -45,20 +50,59 @@ class CompactMiniPlayerBar extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              channel.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              channel.groupName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
+                            showDesktopTooltips
+                                ? Tooltip(
+                                    message: channel.name,
+                                    child: Text(
+                                      channel.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  )
+                                : (isPhone
+                                      ? AdaptiveSingleLineText(
+                                          text: channel.name,
+                                          minFontSize: 13,
+                                        )
+                                      : Text(
+                                          channel.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        )),
+                            showDesktopTooltips
+                                ? Tooltip(
+                                    message: channel.groupName,
+                                    child: Text(
+                                      channel.groupName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  )
+                                : (isPhone
+                                      ? AdaptiveSingleLineText(
+                                          text: channel.groupName,
+                                          minFontSize: 10,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        )
+                                      : Text(
+                                          channel.groupName,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        )),
                           ],
                         ),
                       ),

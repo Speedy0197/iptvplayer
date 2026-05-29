@@ -220,8 +220,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted) return;
 
     final store = context.read<PlaylistStore>();
+    final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    final isTv = isAndroidTv(context);
 
     try {
+      if (_section != HomeSection.watch) {
+        setState(() => _section = HomeSection.watch);
+      }
+
       if (item.type == SearchResultType.group) {
         final g = item.group!;
         final groupPlaylistId = g.playlistId > 0
@@ -238,21 +244,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (store.selectedPlaylistId != c.playlistId) {
           await store.selectPlaylist(c.playlistId);
         }
+
+        final channelGroup = c.groupName.trim();
+        await store.selectGroup(channelGroup.isEmpty ? null : channelGroup);
         await store.play(c);
       }
 
       if (mounted) {
-        setState(() => _section = HomeSection.watch);
-        if (item.type == SearchResultType.group) {
-          final isSmallCompact =
-              MediaQuery.sizeOf(context).width < kCompactBreakpoint;
-          if (isSmallCompact) {
-            await _goToCompactWatchPage(CompactWatchSection.viewChannels);
-          }
+        if (isCompact || isTv) {
+          await _goToCompactWatchPage(CompactWatchSection.viewChannels);
         }
       }
     } catch (e) {
       // Ignore errors during navigation
+    } finally {
+      _cleanupSearch();
     }
   }
 
@@ -406,12 +412,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         context: context,
         builder: (ctx) {
           final tvMode = isAndroidTv(ctx);
-          if (tvMode && !initialized) {
+          final showDesktopTooltips = isMacOrWindowsDesktop();
+          if (!initialized) {
             initialized = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted || !_searchDialogOpen) return;
               _searchFieldFocusNode.requestFocus();
-              reopenKeyboard();
+              if (tvMode) {
+                reopenKeyboard();
+              }
             });
           }
 
@@ -505,44 +514,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           child: Row(
                             children: [
                               Expanded(
-                                child: TextFormField(
-                                  controller: _searchCtrl,
-                                  focusNode: _searchFieldFocusNode,
-                                  autofocus: true,
-                                  onTap: reopenKeyboard,
-                                  onEditingComplete: () =>
-                                      handleTvImeSubmit(tvMode),
-                                  onFieldSubmitted: (_) =>
-                                      handleTvImeSubmit(tvMode),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Search channels, groups',
-                                    prefixIcon: Icon(Icons.search),
-                                  ),
-                                  onChanged: (value) {
-                                    context
-                                        .read<PlaylistStore>()
-                                        .setSearchQuery(value);
+                                child: ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: _searchCtrl,
+                                  builder: (context, value, _) {
+                                    return TextFormField(
+                                      controller: _searchCtrl,
+                                      focusNode: _searchFieldFocusNode,
+                                      autofocus: true,
+                                      onTap: tvMode ? reopenKeyboard : null,
+                                      onEditingComplete: () =>
+                                          handleTvImeSubmit(tvMode),
+                                      onFieldSubmitted: (_) =>
+                                          handleTvImeSubmit(tvMode),
+                                      decoration: InputDecoration(
+                                        labelText: 'Search channels, groups',
+                                        prefixIcon: const Icon(Icons.search),
+                                        suffixIcon:
+                                            !tvMode && value.text.isNotEmpty
+                                            ? IconButton(
+                                                tooltip: 'Clear search',
+                                                onPressed: () {
+                                                  _searchCtrl.clear();
+                                                  context
+                                                      .read<PlaylistStore>()
+                                                      .setSearchQuery('');
+                                                },
+                                                icon: const Icon(Icons.clear),
+                                              )
+                                            : null,
+                                      ),
+                                      onChanged: (searchValue) {
+                                        context
+                                            .read<PlaylistStore>()
+                                            .setSearchQuery(searchValue);
+                                      },
+                                    );
                                   },
                                 ),
                               ),
-                              if (!tvMode) ...[
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  tooltip: 'Open keyboard',
-                                  onPressed: reopenKeyboard,
-                                  icon: const Icon(Icons.keyboard_outlined),
-                                ),
-                                IconButton(
-                                  tooltip: 'Clear search',
-                                  onPressed: () {
-                                    _searchCtrl.clear();
-                                    context
-                                        .read<PlaylistStore>()
-                                        .setSearchQuery('');
-                                  },
-                                  icon: const Icon(Icons.clear),
-                                ),
-                              ],
                             ],
                           ), // end Row
                         ), // end Focus(searchBarActiveFocusNode)
@@ -605,7 +614,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                           : null,
                                       dense: true,
                                       leading: const Icon(Icons.folder_open),
-                                      title: Text(g.name),
+                                      title: showDesktopTooltips
+                                          ? Tooltip(
+                                              message: g.name,
+                                              child: Text(
+                                                g.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            )
+                                          : Text(
+                                              g.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
                                       subtitle: Text(
                                         '${g.channelCount} channels',
                                       ),
@@ -733,7 +755,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _handleSectionChange(HomeSection next) {
     // Unfocus the menu button first
     FocusManager.instance.primaryFocus?.unfocus();
-    
+    final store = context.read<PlaylistStore>();
+
+    if (_section != next) {
+      store.stopPlayback();
+    }
+
     setState(() {
       _section = next;
       if (next == HomeSection.watch) {
@@ -743,14 +770,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     });
     if (next == HomeSection.watch) {
-      context.read<PlaylistStore>().fetchFavoriteGroups();
+      store.fetchFavoriteGroups();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_compactWatchController.hasClients) return;
         _compactWatchController.jumpToPage(CompactWatchSection.viewPlaylists);
       });
     }
     if (next == HomeSection.favorites) {
-      final store = context.read<PlaylistStore>();
       store.fetchFavoriteChannels();
       store.fetchFavoriteGroups();
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -787,12 +813,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             SizedBox(
               width: playlistsWidth,
-              child: WatchPlaylistsPane(store: store, initialItemFocusNode: _watchSectionFocusNode),
+              child: WatchPlaylistsPane(
+                store: store,
+                initialItemFocusNode: _watchSectionFocusNode,
+              ),
             ),
             const SizedBox(width: 8),
             SizedBox(
               width: channelsWidth,
-              child: ChannelsPane(store: store, initialChannelFocusNode: _watchSectionFocusNode),
+              child: ChannelsPane(
+                store: store,
+                initialChannelFocusNode: _watchSectionFocusNode,
+              ),
             ),
             const SizedBox(width: 8),
             Expanded(child: PlayerPane(store: store)),

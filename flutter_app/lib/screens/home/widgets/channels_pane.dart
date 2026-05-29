@@ -110,6 +110,7 @@ class _ChannelTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = channel;
     final selected = store.nowPlaying?.id == c.id;
+    final showDesktopTooltips = isMacOrWindowsDesktop();
 
     Widget trailing = IconButton(
       onPressed: () async {
@@ -145,8 +146,22 @@ class _ChannelTile extends StatelessWidget {
       selected: selected,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       leading: ChannelLogoAvatar(logoUrl: c.logoUrl),
-      title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(c.groupName, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: showDesktopTooltips
+          ? Tooltip(
+              message: c.name,
+              child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            )
+          : Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: showDesktopTooltips
+          ? Tooltip(
+              message: c.groupName,
+              child: Text(
+                c.groupName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            )
+          : Text(c.groupName, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: trailing,
       onTap: isTv ? null : () => _play(context),
     );

@@ -247,10 +247,7 @@ class PlaylistStore extends ChangeNotifier {
 
     final uri = Uri.parse(trimmed);
     if (uri.scheme == 'http' || uri.scheme == 'https') {
-      final response = await _httpGetWithRetry(
-        uri,
-        headers: requestHeaders,
-      );
+      final response = await _httpGetWithRetry(uri, headers: requestHeaders);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ApiException(
           'HTTP ${response.statusCode} while fetching ${_sanitizeUrlForLog(trimmed)}',
@@ -412,10 +409,7 @@ class PlaylistStore extends ChangeNotifier {
           },
         );
         try {
-          final response = await _httpGetWithRetry(
-            uri,
-            headers: headers,
-          );
+          final response = await _httpGetWithRetry(uri, headers: headers);
           if (response.statusCode < 200 || response.statusCode >= 300) {
             continue;
           }
@@ -423,8 +417,7 @@ class PlaylistStore extends ChangeNotifier {
           if (decoded is List<dynamic>) {
             return decoded;
           }
-        } catch (_) {
-        }
+        } catch (_) {}
       }
       return null;
     }
@@ -887,7 +880,6 @@ class PlaylistStore extends ChangeNotifier {
     final candidateChannelIds = <String>{};
     final targetId = channel.epgChannelId.trim().toLowerCase();
     final normalizedChannelName = _normalizeEpgMatchText(channel.name);
-
 
     if (targetId.isNotEmpty) {
       candidateChannelIds.add(targetId);
@@ -1422,6 +1414,12 @@ class PlaylistStore extends ChangeNotifier {
 
   Future<void> selectGroup(String? group) async {
     selectedGroup = group;
+    // Changing groups is a browse action; require an explicit channel tap
+    // (or search channel result) to start playback again.
+    nowPlaying = null;
+    epgEntries = const [];
+    epgSourceMissing = false;
+    loadingEpg = false;
     notifyListeners();
     if (selectedPlaylistId == null) return;
     await fetchChannels(selectedPlaylistId!, group);

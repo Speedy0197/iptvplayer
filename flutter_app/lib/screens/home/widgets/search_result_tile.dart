@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../config/device_utils.dart';
 import '../../../models/models.dart';
 import 'channel_logo_avatar.dart';
 
@@ -19,6 +20,8 @@ class SearchChannelResultTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showDesktopTooltips = isMacOrWindowsDesktop();
+
     return ListTile(
       focusNode: focusNode,
       dense: true,
@@ -27,7 +30,16 @@ class SearchChannelResultTile extends StatelessWidget {
         radius: 14,
         iconSize: 16,
       ),
-      title: Text(channel.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: showDesktopTooltips
+          ? Tooltip(
+              message: channel.name,
+              child: Text(
+                channel.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            )
+          : Text(channel.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -41,10 +53,18 @@ class SearchChannelResultTile extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Chip(
-              label: Text(
-                channel.groupName,
-                style: const TextStyle(fontSize: 11),
-              ),
+              label: showDesktopTooltips
+                  ? Tooltip(
+                      message: channel.groupName,
+                      child: Text(
+                        channel.groupName,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    )
+                  : Text(
+                      channel.groupName,
+                      style: const TextStyle(fontSize: 11),
+                    ),
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               visualDensity: VisualDensity.compact,

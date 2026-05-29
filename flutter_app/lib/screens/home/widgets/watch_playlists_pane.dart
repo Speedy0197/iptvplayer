@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../config/device_utils.dart';
@@ -34,7 +36,8 @@ class WatchPlaylistsPane extends StatefulWidget {
 
 class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
   final ScrollController _groupsScrollController = ScrollController();
-  static const double _groupRowExtent = 56;
+  static const int _maxScrollRetryAttempts = 14;
+  final Map<String, GlobalKey> _groupTileKeys = <String, GlobalKey>{};
   String? _lastSelectedGroup;
   int _lastGroupCount = -1;
   String _lastSearchQuery = '';
@@ -45,29 +48,87 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
     super.dispose();
   }
 
-  void _scrollToSelectedGroup(
-    String? selectedGroup,
-    List<Group> visibleGroups,
-  ) {
-    if (!mounted || !_groupsScrollController.hasClients) return;
+  GlobalKey _groupTileKeyFor(String? groupName) {
+    final key = groupName ?? '__all__';
+    return _groupTileKeys.putIfAbsent(key, GlobalKey.new);
+  }
+
+  void _retryScrollToSelectedGroup(String? selectedGroup, int attempt) {
+    if (!mounted || attempt >= _maxScrollRetryAttempts) return;
+    Future<void>.delayed(const Duration(milliseconds: 40), () {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_scrollToSelectedGroup(selectedGroup, attempt: attempt + 1));
+      });
+    });
+  }
+
+  Future<void> _scrollToSelectedGroup(
+    String? selectedGroup, {
+    int attempt = 0,
+  }) async {
+    if (!mounted) return;
+
+    // When a search filter is active, group positions are transient.
+    // Wait for search reset and scroll against the stable full list.
+    if (widget.store.searchQuery.trim().isNotEmpty) {
+      _retryScrollToSelectedGroup(selectedGroup, attempt);
+      return;
+    }
+
+    final visibleGroups = widget.store.filteredGroups;
+    if (!_groupsScrollController.hasClients) {
+      _retryScrollToSelectedGroup(selectedGroup, attempt);
+      return;
+    }
+
+    final selectedTileKey = _groupTileKeyFor(selectedGroup);
+    final selectedTileContext = selectedTileKey.currentContext;
+    if (selectedTileContext != null) {
+      await Scrollable.ensureVisible(
+        selectedTileContext,
+        alignment: 0.12,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+      return;
+    }
 
     int targetIndex = 0;
     if (selectedGroup != null) {
       final groupIndex = visibleGroups.indexWhere(
         (g) => g.name == selectedGroup,
       );
-      if (groupIndex < 0) return;
+      if (groupIndex < 0) {
+        _retryScrollToSelectedGroup(selectedGroup, attempt);
+        return;
+      }
       targetIndex = groupIndex + 1;
     }
 
-    // Simple scroll to position: just bring the item into view, let it land
-    // at a natural position rather than forcing center alignment
-    final targetOffset = targetIndex * _groupRowExtent;
-    _groupsScrollController.animateTo(
+    final maxExtent = _groupsScrollController.position.maxScrollExtent;
+    final totalRows = visibleGroups.length + 1;
+    final denominator = (totalRows - 1).clamp(1, totalRows);
+    final targetOffset = maxExtent * (targetIndex / denominator);
+    await _groupsScrollController.animateTo(
       targetOffset.clamp(0, _groupsScrollController.position.maxScrollExtent),
-      duration: const Duration(milliseconds: 240),
+      duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
     );
+
+    if (!mounted) return;
+    final alignedContext = selectedTileKey.currentContext;
+    if (alignedContext != null) {
+      await Scrollable.ensureVisible(
+        alignedContext,
+        alignment: 0.12,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+      );
+      return;
+    }
+
+    _retryScrollToSelectedGroup(selectedGroup, attempt);
   }
 
   @override
@@ -79,17 +140,20 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
     final showGroups = widget.mode != WatchBrowseMode.playlistsOnly;
     final isTv = isAndroidTv(context);
 
+    final searchJustCleared =
+        _lastSearchQuery.trim().isNotEmpty && store.searchQuery.trim().isEmpty;
+
     final shouldRefocus =
         _lastSelectedGroup != store.selectedGroup ||
         _lastGroupCount != groups.length ||
-        _lastSearchQuery != store.searchQuery;
+        searchJustCleared;
 
     if (shouldRefocus) {
       _lastSelectedGroup = store.selectedGroup;
       _lastGroupCount = groups.length;
       _lastSearchQuery = store.searchQuery;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToSelectedGroup(store.selectedGroup, groups);
+        unawaited(_scrollToSelectedGroup(store.selectedGroup));
       });
     }
 
@@ -156,16 +220,22 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
                       : ListView.builder(
                           controller: _groupsScrollController,
                           itemCount: groups.length + 1,
-                          itemBuilder: (context, index) => _GroupTile(
-                            index: index,
-                            groups: groups,
-                            store: store,
-                            autofocus: isTv && index == 0,
-                            focusNode: index == 0
-                                ? widget.initialItemFocusNode
-                                : null,
-                            onGroupSelected: widget.onGroupSelected,
-                          ),
+                          itemBuilder: (context, index) {
+                            final groupName = index == 0
+                                ? null
+                                : groups[index - 1].name;
+                            return _GroupTile(
+                              key: _groupTileKeyFor(groupName),
+                              index: index,
+                              groups: groups,
+                              store: store,
+                              autofocus: isTv && index == 0,
+                              focusNode: index == 0
+                                  ? widget.initialItemFocusNode
+                                  : null,
+                              onGroupSelected: widget.onGroupSelected,
+                            );
+                          },
                         ),
                 )
               else
@@ -177,16 +247,22 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
                           shrinkWrap: widget.compact,
                           controller: _groupsScrollController,
                           itemCount: groups.length + 1,
-                          itemBuilder: (context, index) => _GroupTile(
-                            index: index,
-                            groups: groups,
-                            store: store,
-                            autofocus: isTv && index == 0,
-                            focusNode: index == 0
-                                ? widget.initialItemFocusNode
-                                : null,
-                            onGroupSelected: widget.onGroupSelected,
-                          ),
+                          itemBuilder: (context, index) {
+                            final groupName = index == 0
+                                ? null
+                                : groups[index - 1].name;
+                            return _GroupTile(
+                              key: _groupTileKeyFor(groupName),
+                              index: index,
+                              groups: groups,
+                              store: store,
+                              autofocus: isTv && index == 0,
+                              focusNode: index == 0
+                                  ? widget.initialItemFocusNode
+                                  : null,
+                              onGroupSelected: widget.onGroupSelected,
+                            );
+                          },
                         ),
                 ),
             ],
@@ -249,6 +325,7 @@ class _GroupTile extends StatelessWidget {
   final Future<void> Function()? onGroupSelected;
 
   const _GroupTile({
+    super.key,
     required this.index,
     required this.groups,
     required this.store,
@@ -260,6 +337,7 @@ class _GroupTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isTv = isAndroidTv(context);
+    final showDesktopTooltips = isMacOrWindowsDesktop();
 
     if (index == 0) {
       final tile = ListTile(
@@ -295,7 +373,12 @@ class _GroupTile extends StatelessWidget {
     }
 
     final tile = ListTile(
-      title: Text(g.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: showDesktopTooltips
+          ? Tooltip(
+              message: g.name,
+              child: Text(g.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            )
+          : Text(g.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

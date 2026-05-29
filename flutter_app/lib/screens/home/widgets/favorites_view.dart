@@ -170,6 +170,8 @@ class _FavoriteGroupTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showDesktopTooltips = isMacOrWindowsDesktop();
+
     Widget trailing = IconButton(
       onPressed: () async {
         try {
@@ -194,7 +196,16 @@ class _FavoriteGroupTile extends StatelessWidget {
       dense: true,
       visualDensity: isTv ? VisualDensity.compact : VisualDensity.standard,
       minVerticalPadding: isTv ? 0 : null,
-      title: Text(group.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: showDesktopTooltips
+          ? Tooltip(
+              message: group.name,
+              child: Text(
+                group.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            )
+          : Text(group.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: isTv
           ? null
           : Text(
@@ -246,6 +257,7 @@ class _FavoriteChannelTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = channel;
     final selected = store.nowPlaying?.id == c.id;
+    final showDesktopTooltips = isMacOrWindowsDesktop();
 
     Widget trailing = IconButton(
       onPressed: () async {
@@ -274,10 +286,28 @@ class _FavoriteChannelTile extends StatelessWidget {
       dense: true,
       visualDensity: isTv ? VisualDensity.compact : VisualDensity.standard,
       minVerticalPadding: isTv ? 0 : null,
-      title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: showDesktopTooltips
+          ? Tooltip(
+              message: c.name,
+              child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            )
+          : Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: isTv
           ? null
-          : Text(c.groupName, maxLines: 1, overflow: TextOverflow.ellipsis),
+          : (showDesktopTooltips
+                ? Tooltip(
+                    message: c.groupName,
+                    child: Text(
+                      c.groupName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  )
+                : Text(
+                    c.groupName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )),
       trailing: trailing,
       onTap: isTv ? null : _play,
     );

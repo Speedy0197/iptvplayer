@@ -4,6 +4,7 @@ import '../../../config/device_utils.dart';
 import '../../../config/ui_constants.dart';
 import '../../../models/models.dart';
 import '../../../services/playlist_store.dart';
+import '../../../widgets/adaptive_single_line_text.dart';
 import '../../../widgets/channel_player.dart';
 import '../../../widgets/tv_focusable_tile.dart';
 
@@ -77,11 +78,70 @@ class PlayerPane extends StatelessWidget {
     final isCompactLayout =
         MediaQuery.sizeOf(context).width < kCompactBreakpoint;
     final isTv = isAndroidTv(context);
+    final isPhone = isIosOrAndroidPhone(context);
+    final showDesktopTooltips = isMacOrWindowsDesktop();
     final epgLimit = isTv ? kTvEpgEntriesToShow : kDesktopEpgEntriesToShow;
 
     if (channel == null) {
       return const Card(
         child: Center(child: Text('Select a channel to start playback')),
+      );
+    }
+
+    final titleStyle = Theme.of(context).textTheme.titleLarge;
+    final groupStyle = Theme.of(context).textTheme.bodySmall;
+
+    Widget buildChannelNameText() {
+      if (showDesktopTooltips) {
+        return Tooltip(
+          message: channel.name,
+          child: Text(
+            channel.name,
+            style: titleStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      }
+      if (isPhone) {
+        return AdaptiveSingleLineText(
+          text: channel.name,
+          style: titleStyle,
+          minFontSize: 14,
+        );
+      }
+      return Text(
+        channel.name,
+        style: titleStyle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    Widget buildChannelGroupText() {
+      if (showDesktopTooltips) {
+        return Tooltip(
+          message: channel.groupName,
+          child: Text(
+            channel.groupName,
+            style: groupStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      }
+      if (isPhone) {
+        return AdaptiveSingleLineText(
+          text: channel.groupName,
+          style: groupStyle,
+          minFontSize: 11,
+        );
+      }
+      return Text(
+        channel.groupName,
+        style: groupStyle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       );
     }
 
@@ -93,13 +153,8 @@ class PlayerPane extends StatelessWidget {
         onPreviousChannel: _playPreviousChannel,
       ),
       const SizedBox(height: 12),
-      Text(
-        channel.name,
-        style: Theme.of(context).textTheme.titleLarge,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      Text(channel.groupName, style: Theme.of(context).textTheme.bodySmall),
+      buildChannelNameText(),
+      buildChannelGroupText(),
       const SizedBox(height: 16),
       const Text('EPG', style: TextStyle(fontWeight: FontWeight.bold)),
       const SizedBox(height: 8),
@@ -107,7 +162,6 @@ class PlayerPane extends StatelessWidget {
 
     final now = DateTime.now();
     final allEpg = store.epgEntries;
-    // Find the currently airing entry (or the next upcoming if none is live)
     final nowIndex = allEpg.indexWhere(
       (e) => e.startTime.isBefore(now) && e.endTime.isAfter(now),
     );
@@ -166,7 +220,6 @@ class PlayerPane extends StatelessWidget {
     return Card(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Ensure we have valid constraints; fallback to reasonable defaults if not
           final availableWidth = constraints.maxWidth > 0
               ? constraints.maxWidth
               : 500;
@@ -179,7 +232,6 @@ class PlayerPane extends StatelessWidget {
                   availableWidth * 0.82,
                 )
               : (availableWidth * 0.95).clamp(200.0, 1500.0);
-          // On TV, keep the current visual height and let width follow it.
           final playerHeight = (maxPlayerWidth / 16 * 9).clamp(
             160.0,
             availableHeight * (isTv ? 0.48 : 0.6),
@@ -210,18 +262,8 @@ class PlayerPane extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            Text(
-                              channel.name,
-                              style: Theme.of(context).textTheme.titleLarge,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              channel.groupName,
-                              style: Theme.of(context).textTheme.bodySmall,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            buildChannelNameText(),
+                            buildChannelGroupText(),
                           ],
                         ),
                       ),
@@ -260,18 +302,8 @@ class PlayerPane extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      Text(
-                        channel.name,
-                        style: Theme.of(context).textTheme.titleLarge,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        channel.groupName,
-                        style: Theme.of(context).textTheme.bodySmall,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      buildChannelNameText(),
+                      buildChannelGroupText(),
                       const SizedBox(height: 16),
                       const Text(
                         'EPG',
