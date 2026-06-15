@@ -6,10 +6,12 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../config/device_utils.dart';
+import '../services/playlist_store.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 class ChannelPlayer extends StatefulWidget {
+  final PlaylistStore store;
   final String streamUrl;
   final bool isActiveRecording;
   final VoidCallback? onNextChannel;
@@ -17,6 +19,7 @@ class ChannelPlayer extends StatefulWidget {
 
   const ChannelPlayer({
     super.key,
+    required this.store,
     required this.streamUrl,
     this.isActiveRecording = false,
     this.onNextChannel,
@@ -170,6 +173,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       final oldPlayer = _player;
       _player = shadowPlayer;
       _controller = shadowController;
+      widget.store.replacePlayer(shadowPlayer, shadowController);
       _bindPlayerStreams();
 
       setState(() {
@@ -248,36 +252,15 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         if (mounted) setState(() {});
       });
     }
-    _player = Player(
-      configuration: const PlayerConfiguration(
-        title: 'StreamPilot',
-        logLevel: MPVLogLevel.warn,
-        bufferSize: 64 * 1024 * 1024,
-      ),
-    );
 
-    // Force software video decoding at the libmpv level on Android BEFORE
-    // creating VideoController. NVIDIA Tegra and older Android TV chips cannot
-    // synchronize ImageTextureEntry surfaces properly. Software decoding writes
-    // plain YUV/RGB frames that pixel-buffer surfaces can display.
-    if (Platform.isAndroid) {
-      try {
-        final nativePlayer = _player.platform;
-        if (nativePlayer is NativePlayer) {
-          debugPrint('Setting hwdec=no for Android');
-          nativePlayer.setProperty('hwdec', 'no');
-          debugPrint('hwdec property set successfully');
-        } else {
-          debugPrint(
-            'Player platform is not NativePlayer: ${nativePlayer.runtimeType}',
-          );
-        }
-      } catch (e) {
-        debugPrint('Failed to configure hwdec: $e');
-      }
-    }
-
-    _controller = VideoController(_player);
+    // The Player/VideoController are owned by PlaylistStore so they survive
+    // this State being disposed and recreated by responsive layout changes
+    // (e.g. rotating across a width breakpoint) while a fullscreen route
+    // still holds direct references to them.
+    final reusingPlayer = widget.store.hasPlayer;
+    _player = widget.store.ensurePlayer();
+    _controller = widget.store.videoController;
+    _loading = !reusingPlayer || _player.state.buffering;
 
     _bindPlayerStreams();
 
@@ -372,7 +355,9 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       }
     });
 
-    _openCurrentStream(resetAttempts: true);
+    if (!reusingPlayer) {
+      _openCurrentStream(resetAttempts: true);
+    }
   }
 
   @override
@@ -443,7 +428,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _completedSub?.cancel();
     _hideControlsNonFullscreenTimer?.cancel();
     _tvFullscreenFocusNode?.dispose();
-    _player.dispose();
+    // _player is owned by PlaylistStore (see initState) and outlives this
+    // State, so it must not be disposed here.
     super.dispose();
   }
 
@@ -911,6 +897,10 @@ class _ChannelPlayerState extends State<ChannelPlayer>
           ),
         ),
       );
+    }
+
+    if (_inFullscreen) {
+      return const ColoredBox(color: Colors.black);
     }
 
     return Video(

@@ -75,8 +75,6 @@ class PlayerPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Channel? channel = store.nowPlaying;
-    final isCompactLayout =
-        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
     final isTv = isAndroidTv(context);
     final isPhone = isIosOrAndroidPhone(context);
     final showDesktopTooltips = isMacOrWindowsDesktop();
@@ -145,21 +143,6 @@ class PlayerPane extends StatelessWidget {
       );
     }
 
-    final headerContent = [
-      ChannelPlayer(
-        streamUrl: channel.streamUrl,
-        isActiveRecording: store.isChannelActivelyRecording(channel),
-        onNextChannel: _playNextChannel,
-        onPreviousChannel: _playPreviousChannel,
-      ),
-      const SizedBox(height: 12),
-      buildChannelNameText(),
-      buildChannelGroupText(),
-      const SizedBox(height: 16),
-      const Text('EPG', style: TextStyle(fontWeight: FontWeight.bold)),
-      const SizedBox(height: 8),
-    ];
-
     final now = DateTime.now();
     final allEpg = store.epgEntries;
     final nowIndex = allEpg.indexWhere(
@@ -184,38 +167,6 @@ class PlayerPane extends StatelessWidget {
               return _buildEpgEntryCard(context, entry, isTv);
             },
           );
-
-    if (isCompactLayout) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: ListView(
-            children: [
-              ...headerContent,
-              if (store.loadingEpg)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (store.epgSourceMissing)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 8),
-                  child: Text('No EPG source configured for this channel'),
-                )
-              else if (epgToShow.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 8),
-                  child: Text('No EPG data available'),
-                )
-              else
-                ...epgToShow.map(
-                  (entry) => _buildEpgEntryCard(context, entry, isTv),
-                ),
-            ],
-          ),
-        ),
-      );
-    }
 
     return Card(
       child: LayoutBuilder(
@@ -254,6 +205,7 @@ class PlayerPane extends StatelessWidget {
                               width: maxPlayerWidth,
                               height: playerHeight,
                               child: ChannelPlayer(
+                                store: store,
                                 streamUrl: channel.streamUrl,
                                 isActiveRecording: store
                                     .isChannelActivelyRecording(channel),
@@ -292,6 +244,7 @@ class PlayerPane extends StatelessWidget {
                           width: maxPlayerWidth,
                           height: playerHeight,
                           child: ChannelPlayer(
+                            store: store,
                             streamUrl: channel.streamUrl,
                             isActiveRecording: store.isChannelActivelyRecording(
                               channel,

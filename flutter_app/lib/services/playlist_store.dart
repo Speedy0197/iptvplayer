@@ -4,6 +4,8 @@ import 'dart:io';
 import 'vuplus_api.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:media_kit/media_kit.dart' hide Playlist;
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:xml/xml.dart';
 
 import '../models/models.dart';
@@ -1067,6 +1069,58 @@ class PlaylistStore extends ChangeNotifier {
   String? selectedGroup;
   Channel? nowPlaying;
   String searchQuery = '';
+
+  // The media_kit Player/VideoController are owned here (not by
+  // ChannelPlayer's State) so they survive responsive layout changes that
+  // dispose and recreate that State, e.g. rotating across a width
+  // breakpoint while a fullscreen route still holds direct references to
+  // the player.
+  Player? _player;
+  VideoController? _videoController;
+
+  Player get player => _player!;
+  VideoController get videoController => _videoController!;
+  bool get hasPlayer => _player != null;
+
+  Player ensurePlayer() {
+    final existing = _player;
+    if (existing != null) return existing;
+
+    final player = Player(
+      configuration: const PlayerConfiguration(
+        title: 'StreamPilot',
+        logLevel: MPVLogLevel.warn,
+        bufferSize: 64 * 1024 * 1024,
+      ),
+    );
+
+    // Force software video decoding at the libmpv level on Android BEFORE
+    // creating VideoController. NVIDIA Tegra and older Android TV chips
+    // cannot synchronize ImageTextureEntry surfaces properly. Software
+    // decoding writes plain YUV/RGB frames that pixel-buffer surfaces can
+    // display.
+    if (Platform.isAndroid) {
+      final nativePlayer = player.platform;
+      if (nativePlayer is NativePlayer) {
+        nativePlayer.setProperty('hwdec', 'no');
+      }
+    }
+
+    _player = player;
+    _videoController = VideoController(player);
+    return player;
+  }
+
+  void replacePlayer(Player player, VideoController controller) {
+    _player = player;
+    _videoController = controller;
+  }
+
+  @override
+  void dispose() {
+    _player?.dispose();
+    super.dispose();
+  }
 
   bool loadingPlaylists = false;
   bool loadingGroups = false;
