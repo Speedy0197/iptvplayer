@@ -50,6 +50,7 @@ dependencies:
   path_provider: ^2.1.5
   xml: ^6.6.1
   window_manager: ^0.5.1
+  audio_session: ^0.2.3
 
 dev_dependencies:
   flutter_test:

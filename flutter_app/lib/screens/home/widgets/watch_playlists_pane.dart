@@ -85,12 +85,15 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
     final selectedTileKey = _groupTileKeyFor(selectedGroup);
     final selectedTileContext = selectedTileKey.currentContext;
     if (selectedTileContext != null) {
-      await Scrollable.ensureVisible(
-        selectedTileContext,
-        alignment: 0.12,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
+      final renderObject = selectedTileContext.findRenderObject();
+      if (renderObject != null) {
+        await _groupsScrollController.position.ensureVisible(
+          renderObject,
+          alignment: 0.12,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        );
+      }
       return;
     }
 
@@ -119,12 +122,15 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
     if (!mounted) return;
     final alignedContext = selectedTileKey.currentContext;
     if (alignedContext != null) {
-      await Scrollable.ensureVisible(
-        alignedContext,
-        alignment: 0.12,
-        duration: const Duration(milliseconds: 160),
-        curve: Curves.easeOut,
-      );
+      final renderObject = alignedContext.findRenderObject();
+      if (renderObject != null) {
+        await _groupsScrollController.position.ensureVisible(
+          renderObject,
+          alignment: 0.12,
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+        );
+      }
       return;
     }
 

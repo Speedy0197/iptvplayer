@@ -167,11 +167,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
     if (_compactWatchController.hasClients) {
-      await _compactWatchController.animateToPage(
-        page,
-        duration: kTabAnimation,
-        curve: Curves.easeOut,
-      );
+      final fromPage = _compactWatchController.page?.round() ?? page;
+      if ((page - fromPage).abs() > 1) {
+        // Jump straight there for multi-page hops (e.g. Playlists <-> Channels)
+        // so the page(s) in between never get built/painted, even briefly.
+        _compactWatchController.jumpToPage(page);
+      } else {
+        await _compactWatchController.animateToPage(
+          page,
+          duration: kTabAnimation,
+          curve: Curves.easeOut,
+        );
+      }
     }
   }
 

@@ -39,6 +39,7 @@ class _CompactWatchSectionState extends State<CompactWatchSection> {
   late int _lastPage;
   late final FocusNode _firstGroupFocusNode;
   late final FocusNode _firstChannelFocusNode;
+  int _focusRequestGeneration = 0;
 
   @override
   void initState() {
@@ -71,12 +72,19 @@ class _CompactWatchSectionState extends State<CompactWatchSection> {
     super.didUpdateWidget(oldWidget);
     if (widget.currentPage != _lastPage) {
       _lastPage = widget.currentPage;
+      // Invalidate any pending focus request from a page we've already moved
+      // away from (e.g. a transient intermediate page during a multi-page
+      // animateToPage jump). Without this, a stale request can call
+      // requestFocus() on a tile in an off-screen page after we've already
+      // navigated elsewhere, and Scrollable.ensureVisible then yanks the
+      // PageView back to that page.
+      final generation = ++_focusRequestGeneration;
       final focusNode = _focusNodeForPage(widget.currentPage);
       if (focusNode == null) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         Future<void>.delayed(kTabAnimation, () {
-          if (!mounted) return;
+          if (!mounted || generation != _focusRequestGeneration) return;
           focusNode.requestFocus();
         });
       });

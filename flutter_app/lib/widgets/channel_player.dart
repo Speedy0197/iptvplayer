@@ -108,6 +108,14 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     });
 
     _errorSub = _player.stream.error.listen((message) {
+      // mpv's AVAudioSession-backed audio output can fail to initialize
+      // (notably on the iOS Simulator) while the video track keeps playing
+      // fine. Treat it as a non-fatal warning instead of showing the
+      // "Retry" overlay over an otherwise-working stream.
+      if (message.contains('Could not open/initialize audio device')) {
+        debugPrint('Ignoring non-fatal audio output error: $message');
+        return;
+      }
       _handleFailure('Playback error: $message');
     });
 
@@ -437,7 +445,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     if (_inFullscreen || !mounted) return;
 
     setState(() => _inFullscreen = true);
-    unawaited(_setMacOSNativeFullscreen(true));
+    unawaited(_setNativeFullscreen(true));
 
     Navigator.of(context, rootNavigator: true)
         .push(
@@ -459,19 +467,19 @@ class _ChannelPlayerState extends State<ChannelPlayer>
           if (mounted) {
             setState(() => _inFullscreen = false);
           }
-          unawaited(_setMacOSNativeFullscreen(false));
+          unawaited(_setNativeFullscreen(false));
         });
   }
 
-  Future<void> _setMacOSNativeFullscreen(bool enabled) async {
-    if (!Platform.isMacOS) return;
+  Future<void> _setNativeFullscreen(bool enabled) async {
+    if (!Platform.isMacOS && !Platform.isWindows) return;
     try {
       final currentlyFullscreen = await windowManager.isFullScreen();
       if (currentlyFullscreen != enabled) {
         await windowManager.setFullScreen(enabled);
       }
     } catch (e) {
-      debugPrint('Failed to toggle macOS native fullscreen: $e');
+      debugPrint('Failed to toggle native fullscreen: $e');
     }
   }
 
