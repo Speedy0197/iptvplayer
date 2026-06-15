@@ -180,7 +180,7 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
                         autofocus: isTv && i == 0,
                         focusNode: i == 0 ? widget.initialItemFocusNode : null,
                         onTap: () async {
-                          await store.selectPlaylist(p.id);
+                          unawaited(store.selectPlaylist(p.id));
                           await widget.onPlaylistSelected?.call();
                         },
                       );
@@ -201,7 +201,7 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
                         autofocus: isTv && i == 0,
                         focusNode: i == 0 ? widget.initialItemFocusNode : null,
                         onTap: () async {
-                          await store.selectPlaylist(p.id);
+                          unawaited(store.selectPlaylist(p.id));
                           await widget.onPlaylistSelected?.call();
                         },
                       );
@@ -347,7 +347,7 @@ class _GroupTile extends StatelessWidget {
         onTap: isTv
             ? null
             : () async {
-                await store.selectGroup(null);
+                unawaited(store.selectGroup(null));
                 await onGroupSelected?.call();
               },
       );
@@ -358,7 +358,7 @@ class _GroupTile extends StatelessWidget {
         focusNode: focusNode,
         autofocus: autofocus,
         onTap: () async {
-          await store.selectGroup(null);
+          unawaited(store.selectGroup(null));
           await onGroupSelected?.call();
         },
         child: tile,
@@ -368,7 +368,7 @@ class _GroupTile extends StatelessWidget {
     final g = groups[index - 1];
     final isFavorite = store.isGroupFavorite(g.playlistId, g.name);
     Future<void> openGroup() async {
-      await store.selectGroup(g.name);
+      unawaited(store.selectGroup(g.name));
       await onGroupSelected?.call();
     }
 

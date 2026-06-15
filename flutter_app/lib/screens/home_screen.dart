@@ -161,6 +161,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_compactWatchView != page) {
       setState(() => _compactWatchView = page);
     }
+    // Wait for any pending rebuild/layout (e.g. from a store update fired in
+    // the same gesture) to settle, otherwise animateToPage can be called
+    // against a PageView with stale dimensions and silently no-op.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
     if (_compactWatchController.hasClients) {
       await _compactWatchController.animateToPage(
         page,
