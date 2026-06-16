@@ -271,7 +271,12 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     final reusingPlayer = widget.store.hasPlayer;
     _player = widget.store.ensurePlayer();
     _controller = widget.store.videoController;
-    _loading = !reusingPlayer || _player.state.buffering;
+    // Only treat the player as active if it is actually playing/buffering —
+    // a stopped player (e.g. after navigating away) still needs a fresh open.
+    final playerIsActive =
+        reusingPlayer &&
+        (_player.state.playing || _player.state.buffering);
+    _loading = !playerIsActive;
 
     _bindPlayerStreams();
 
@@ -366,7 +371,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       }
     });
 
-    if (!reusingPlayer) {
+    if (!playerIsActive) {
       _openCurrentStream(resetAttempts: true);
     }
   }
