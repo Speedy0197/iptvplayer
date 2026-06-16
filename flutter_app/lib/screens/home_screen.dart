@@ -325,20 +325,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final store = context.read<PlaylistStore>();
 
-    try {
-      await store.play(channel);
+    // Don't await play() before navigating — EPG fetch can take seconds or
+    // fail, but nowPlaying is set synchronously so the player is ready.
+    store.play(channel);
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
-      if (isCompact) {
-        await _openCompactPlayer(store);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not play channel: $e')));
+    final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    if (isCompact) {
+      await _openCompactPlayer(store);
     }
   }
 

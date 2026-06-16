@@ -102,7 +102,10 @@ class _ChannelTile extends StatelessWidget {
   });
 
   Future<void> _play(BuildContext context) async {
-    await store.play(channel);
+    // Don't await play() — it blocks on EPG fetch which can take seconds or
+    // fail entirely. nowPlaying is set synchronously at the top of play(), so
+    // the player pane is ready immediately. Navigate first, let EPG load in bg.
+    store.play(channel);
     await onChannelSelected?.call();
   }
 
