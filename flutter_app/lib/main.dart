@@ -20,44 +20,49 @@ Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  if (Platform.isMacOS || Platform.isWindows) {
-    const minimumWindowSize = Size(kCompactBreakpoint + 1, 640);
-    await windowManager.ensureInitialized();
-    await windowManager.waitUntilReadyToShow(
-      const WindowOptions(minimumSize: minimumWindowSize),
-      () async {
-        await windowManager.setMinimumSize(minimumWindowSize);
-        if (Platform.isMacOS) {
-          await windowManager.maximize();
-        } else if (Platform.isWindows) {
-          await windowManager.maximize();
-        }
-        await windowManager.show();
-        await windowManager.focus();
-      },
-    );
+  try {
+    if (Platform.isMacOS || Platform.isWindows) {
+      const minimumWindowSize = Size(kCompactBreakpoint + 1, 640);
+      await windowManager.ensureInitialized();
+      await windowManager.waitUntilReadyToShow(
+        const WindowOptions(minimumSize: minimumWindowSize),
+        () async {
+          await windowManager.setMinimumSize(minimumWindowSize);
+          if (Platform.isMacOS) {
+            await windowManager.maximize();
+          } else if (Platform.isWindows) {
+            await windowManager.maximize();
+          }
+          await windowManager.show();
+          await windowManager.focus();
+        },
+      );
+    }
+
+    // Configure audio session in background — errors must not block startup.
+    if (Platform.isIOS) {
+      AudioSession.instance
+          .then((session) => session
+              .configure(AudioSessionConfiguration(
+                avAudioSessionCategory: AVAudioSessionCategory.playback,
+                avAudioSessionCategoryOptions:
+                    AVAudioSessionCategoryOptions.allowAirPlay |
+                        AVAudioSessionCategoryOptions.allowBluetooth |
+                        AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+                avAudioSessionMode: AVAudioSessionMode.moviePlayback,
+              ))
+              .then((_) => session.setActive(true)))
+          .ignore();
+    }
+
+    MediaKit.ensureInitialized();
+  } catch (e, st) {
+    debugPrint('StreamPilot startup error: $e\n$st');
+  } finally {
+    FlutterNativeSplash.remove();
   }
 
-  if (Platform.isIOS) {
-    final session = await AudioSession.instance;
-    await session.configure(
-      AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions:
-            AVAudioSessionCategoryOptions.allowAirPlay |
-            AVAudioSessionCategoryOptions.allowBluetooth |
-            AVAudioSessionCategoryOptions.allowBluetoothA2dp,
-        avAudioSessionMode: AVAudioSessionMode.moviePlayback,
-      ),
-    );
-    await session.setActive(true);
-  }
-
-  MediaKit.ensureInitialized();
-  final api = ApiClient(baseUrl: AppConfig.apiBase);
-
-  FlutterNativeSplash.remove();
-  runApp(IptvFlutterApp(api: api));
+  runApp(IptvFlutterApp(api: ApiClient(baseUrl: AppConfig.apiBase)));
 }
 
 class IptvFlutterApp extends StatelessWidget {
