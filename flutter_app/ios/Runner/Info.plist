@@ -40,6 +40,10 @@
 		<array>
 			<string>itms-beta</string>
 		</array>
+		<key>NSCameraUsageDescription</key>
+		<string>StreamPilot does not use your camera. This description is required because a third-party library references the camera API.</string>
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>StreamPilot does not use your location. This description is required because a third-party library references the location API.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>StreamPilot uses your photo library only when you choose a file to import content into the app.</string>
 		<key>UIApplicationSceneManifest</key>
