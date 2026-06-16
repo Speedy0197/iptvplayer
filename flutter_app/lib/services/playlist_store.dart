@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1116,6 +1117,11 @@ class PlaylistStore extends ChangeNotifier {
     _videoController = controller;
   }
 
+  void _stopPlayer() {
+    final p = _player;
+    if (p != null) unawaited(p.stop());
+  }
+
   @override
   void dispose() {
     _player?.dispose();
@@ -1415,6 +1421,7 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   Future<void> selectPlaylist(int playlistId) async {
+    if (nowPlaying != null) _stopPlayer();
     selectedPlaylistId = playlistId;
     selectedGroup = null;
     epgEntries = const [];
@@ -1470,6 +1477,7 @@ class PlaylistStore extends ChangeNotifier {
     selectedGroup = group;
     // Changing groups is a browse action; require an explicit channel tap
     // (or search channel result) to start playback again.
+    if (nowPlaying != null) _stopPlayer();
     nowPlaying = null;
     epgEntries = const [];
     epgSourceMissing = false;
@@ -1567,6 +1575,7 @@ class PlaylistStore extends ChangeNotifier {
       return;
     }
 
+    _stopPlayer();
     nowPlaying = null;
     epgEntries = const [];
     epgSourceMissing = false;
@@ -1989,6 +1998,7 @@ class PlaylistStore extends ChangeNotifier {
   Future<void> deletePlaylist(int id) async {
     await api.delete('/playlists/$id');
     if (selectedPlaylistId == id) {
+      if (nowPlaying != null) _stopPlayer();
       selectedPlaylistId = null;
       selectedGroup = null;
       channels = const [];
