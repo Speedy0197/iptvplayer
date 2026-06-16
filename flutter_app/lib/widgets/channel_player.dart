@@ -174,6 +174,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         timeout: const Duration(seconds: 2),
       );
       if (!ready || !mounted) {
+        await shadowPlayer.stop();
         await shadowPlayer.dispose();
         return false;
       }
@@ -189,9 +190,11 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         _error = null;
       });
 
+      await oldPlayer.stop();
       await oldPlayer.dispose();
       return true;
     } catch (_) {
+      await shadowPlayer.stop();
       await shadowPlayer.dispose();
       return false;
     } finally {

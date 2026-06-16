@@ -33,8 +33,10 @@ Future<void> main() async {
           } else if (Platform.isWindows) {
             await windowManager.maximize();
           }
-          await windowManager.show();
-          await windowManager.focus();
+          // show()/focus() are deferred to a post-frame callback below so
+          // the window only becomes visible after Flutter completes its first
+          // layout pass — calling show() here lets mouse events arrive before
+          // any RenderBox has been laid out, triggering hit-test assertions.
         },
       );
     }
@@ -63,6 +65,17 @@ Future<void> main() async {
   }
 
   runApp(IptvFlutterApp(api: ApiClient(baseUrl: AppConfig.apiBase)));
+
+  if (Platform.isMacOS || Platform.isWindows) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await windowManager.show();
+        await windowManager.focus();
+      } catch (e) {
+        debugPrint('Failed to show/focus window: $e');
+      }
+    });
+  }
 }
 
 class IptvFlutterApp extends StatelessWidget {

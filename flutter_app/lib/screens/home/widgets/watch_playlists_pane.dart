@@ -121,7 +121,7 @@ class _WatchPlaylistsPaneState extends State<WatchPlaylistsPane> {
 
     if (!mounted) return;
     final alignedContext = selectedTileKey.currentContext;
-    if (alignedContext != null) {
+    if (alignedContext != null && alignedContext.mounted) {
       final renderObject = alignedContext.findRenderObject();
       if (renderObject != null) {
         await _groupsScrollController.position.ensureVisible(

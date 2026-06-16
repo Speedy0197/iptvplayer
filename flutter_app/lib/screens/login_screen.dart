@@ -25,6 +25,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String? _error;
   bool _showVerifyAction = false;
+  bool _obscurePassword = true;
   bool _startingTvLogin = false;
   bool _pollingTvLogin = false;
   String? _tvLoginError;
@@ -338,11 +339,20 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _passwordCtrl,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Password',
-                prefixIcon: Icon(Icons.lock_outline),
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                  ),
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
+                ),
               ),
-              obscureText: true,
+              obscureText: _obscurePassword,
               validator: (value) =>
                   value == null || value.isEmpty ? 'Required' : null,
             ),

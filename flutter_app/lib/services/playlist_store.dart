@@ -1124,7 +1124,14 @@ class PlaylistStore extends ChangeNotifier {
 
   @override
   void dispose() {
-    _player?.dispose();
+    // stop() must finish before dispose() so mpv's core thread exits
+    // run_playloop before mpv_terminate_destroy frees the property-change
+    // callback structs — otherwise mp_client_send_property_changes crashes.
+    final p = _player;
+    _player = null;
+    if (p != null) {
+      unawaited(p.stop().then((_) => p.dispose()));
+    }
     super.dispose();
   }
 
