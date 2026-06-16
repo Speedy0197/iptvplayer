@@ -84,9 +84,17 @@ class PlaylistStore extends ChangeNotifier {
     loadingEpg = true;
     notifyListeners();
     try {
-      final vuplusApi = _selectedVuplusApi();
-      final xml = await vuplusApi.fetchEpg(serviceRef);
-      epgEntries = _parseVuplusEpg(xml, serviceRef);
+      final cached = _vuplusEpgCache[serviceRef];
+      if (cached != null &&
+          DateTime.now().difference(cached.fetchedAt) < _vuplusEpgCacheTtl) {
+        epgEntries = cached.entries;
+      } else {
+        final vuplusApi = _selectedVuplusApi();
+        final xml = await vuplusApi.fetchEpg(serviceRef);
+        epgEntries = _parseVuplusEpg(xml, serviceRef);
+        _vuplusEpgCache[serviceRef] =
+            (fetchedAt: DateTime.now(), entries: epgEntries);
+      }
     } finally {
       loadingEpg = false;
       notifyListeners();
@@ -186,7 +194,12 @@ class PlaylistStore extends ChangeNotifier {
 
   // XMLTV cache: url -> (fetchedAt, rawXml)
   final Map<String, ({DateTime fetchedAt, String xml})> _xmltvCache = {};
-  static const Duration _xmltvCacheTtl = Duration(minutes: 30);
+  static const Duration _xmltvCacheTtl = Duration(hours: 6);
+
+  // VU+ EPG cache: serviceRef -> (fetchedAt, entries)
+  final Map<String, ({DateTime fetchedAt, List<EpgEntry> entries})>
+      _vuplusEpgCache = {};
+  static const Duration _vuplusEpgCacheTtl = Duration(hours: 6);
 
   bool _isMaskedXtreamPassword(String? value) => (value ?? '').trim() == '***';
 
@@ -1554,8 +1567,17 @@ class PlaylistStore extends ChangeNotifier {
     try {
       if (playlist.type == 'vuplus') {
         final vuplusApi = _vuplusApiForPlaylist(playlist);
-        final epgXml = await vuplusApi.fetchEpg(effectiveEpgChannelId);
-        epgEntries = _parseVuplusEpg(epgXml, effectiveEpgChannelId);
+        final cachedVuplus = _vuplusEpgCache[effectiveEpgChannelId];
+        if (cachedVuplus != null &&
+            DateTime.now().difference(cachedVuplus.fetchedAt) <
+                _vuplusEpgCacheTtl) {
+          epgEntries = cachedVuplus.entries;
+        } else {
+          final epgXml = await vuplusApi.fetchEpg(effectiveEpgChannelId);
+          epgEntries = _parseVuplusEpg(epgXml, effectiveEpgChannelId);
+          _vuplusEpgCache[effectiveEpgChannelId] =
+              (fetchedAt: DateTime.now(), entries: epgEntries);
+        }
 
         try {
           final timersXml = await vuplusApi.fetchTimers();
