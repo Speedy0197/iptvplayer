@@ -92,8 +92,10 @@ class PlaylistStore extends ChangeNotifier {
         final vuplusApi = _selectedVuplusApi();
         final xml = await vuplusApi.fetchEpg(serviceRef);
         epgEntries = _parseVuplusEpg(xml, serviceRef);
-        _vuplusEpgCache[serviceRef] =
-            (fetchedAt: DateTime.now(), entries: epgEntries);
+        _vuplusEpgCache[serviceRef] = (
+          fetchedAt: DateTime.now(),
+          entries: epgEntries,
+        );
       }
     } finally {
       loadingEpg = false;
@@ -198,7 +200,7 @@ class PlaylistStore extends ChangeNotifier {
 
   // VU+ EPG cache: serviceRef -> (fetchedAt, entries)
   final Map<String, ({DateTime fetchedAt, List<EpgEntry> entries})>
-      _vuplusEpgCache = {};
+  _vuplusEpgCache = {};
   static const Duration _vuplusEpgCacheTtl = Duration(hours: 6);
 
   bool _isMaskedXtreamPassword(String? value) => (value ?? '').trim() == '***';
@@ -1108,15 +1110,12 @@ class PlaylistStore extends ChangeNotifier {
       ),
     );
 
-    // Force software video decoding at the libmpv level on Android BEFORE
-    // creating VideoController. NVIDIA Tegra and older Android TV chips
-    // cannot synchronize ImageTextureEntry surfaces properly. Software
-    // decoding writes plain YUV/RGB frames that pixel-buffer surfaces can
-    // display.
+    // Prefer hardware decoding on Android for TV-class streams where software
+    // decode can saturate CPU and cause visible lag/stutter.
     if (Platform.isAndroid) {
       final nativePlayer = player.platform;
       if (nativePlayer is NativePlayer) {
-        nativePlayer.setProperty('hwdec', 'no');
+        nativePlayer.setProperty('hwdec', 'auto-safe');
       }
     }
 
@@ -1575,8 +1574,10 @@ class PlaylistStore extends ChangeNotifier {
         } else {
           final epgXml = await vuplusApi.fetchEpg(effectiveEpgChannelId);
           epgEntries = _parseVuplusEpg(epgXml, effectiveEpgChannelId);
-          _vuplusEpgCache[effectiveEpgChannelId] =
-              (fetchedAt: DateTime.now(), entries: epgEntries);
+          _vuplusEpgCache[effectiveEpgChannelId] = (
+            fetchedAt: DateTime.now(),
+            entries: epgEntries,
+          );
         }
 
         try {

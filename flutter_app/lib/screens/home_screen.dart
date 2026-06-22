@@ -278,8 +278,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted) return;
 
     final store = context.read<PlaylistStore>();
-    final isSmallCompact =
-        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
+    final isTv = isAndroidTv(context);
 
     if (_section != HomeSection.watch) {
       setState(() => _section = HomeSection.watch);
@@ -299,18 +299,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       if (!mounted) return;
 
-      if (isSmallCompact) {
-        if (_compactWatchView != CompactWatchSection.viewChannels) {
-          setState(() => _compactWatchView = CompactWatchSection.viewChannels);
-        }
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !_compactWatchController.hasClients) return;
-          _compactWatchController.animateToPage(
-            CompactWatchSection.viewChannels,
-            duration: kTabAnimation,
-            curve: Curves.easeOut,
-          );
-        });
+      if (isCompact || isTv) {
+        await _goToCompactWatchPage(CompactWatchSection.viewChannels);
       }
     } catch (e) {
       if (!mounted) return;
@@ -332,7 +322,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted) return;
 
     final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
-    if (isCompact) {
+    final isTv = isAndroidTv(context);
+    if (isCompact || isTv) {
       await _openCompactPlayer(store);
     }
   }
