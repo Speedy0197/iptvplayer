@@ -8,7 +8,10 @@ import '../../../widgets/tv_focusable_tile.dart';
 import 'channel_action_sheet.dart';
 import 'channel_logo_avatar.dart';
 
-class ChannelsPane extends StatelessWidget {
+// Standard Material two-line ListTile height (leading + title + subtitle).
+const double _kChannelTileHeight = 72.0;
+
+class ChannelsPane extends StatefulWidget {
   final PlaylistStore store;
   final bool compact;
   final bool fullscreen;
@@ -25,36 +28,94 @@ class ChannelsPane extends StatelessWidget {
   });
 
   @override
+  State<ChannelsPane> createState() => _ChannelsPaneState();
+}
+
+class _ChannelsPaneState extends State<ChannelsPane> {
+  final ScrollController _scrollController = ScrollController();
+  int? _lastNowPlayingId;
+  bool _pendingScrollToNowPlaying = false;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToNowPlaying() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final channels = widget.store.channels;
+    final nowPlaying = widget.store.nowPlaying;
+    if (nowPlaying == null) {
+      _pendingScrollToNowPlaying = false;
+      return;
+    }
+    final index = channels.indexWhere((c) => c.id == nowPlaying.id);
+    if (index < 0) {
+      _pendingScrollToNowPlaying = false;
+      return;
+    }
+
+    _pendingScrollToNowPlaying = false;
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    // maxScrollExtent is exact because ListView uses itemExtent.
+    if (maxExtent <= 0) return; // list fits in viewport, item already visible
+    final targetOffset = (index * _kChannelTileHeight).clamp(0.0, maxExtent);
+    _scrollController.animateTo(
+      targetOffset,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final channels = store.channels;
+    final channels = widget.store.channels;
     final isTv = isAndroidTv(context);
+    final nowPlayingId = widget.store.nowPlaying?.id;
+
+    // Detect nowPlaying change. This runs when the pane is actually visible
+    // and laid out (not before), so _scrollController always has clients by
+    // the time the post-frame callback fires.
+    if (nowPlayingId != null && nowPlayingId != _lastNowPlayingId) {
+      _lastNowPlayingId = nowPlayingId;
+      _pendingScrollToNowPlaying = true;
+    }
+
+    if (_pendingScrollToNowPlaying) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToNowPlaying());
+    }
 
     Widget buildList({required bool shrinkWrap}) {
-      if (store.loadingChannels) {
+      if (widget.store.loadingChannels) {
         return const Center(child: CircularProgressIndicator());
       }
       if (channels.isEmpty) {
         return const Center(child: Text('No channels found'));
       }
       return ListView.builder(
+        controller: _scrollController,
         shrinkWrap: shrinkWrap,
+        // itemExtent makes maxScrollExtent exact from the first frame —
+        // no lazy estimation needed, so scroll-to-index is always accurate.
+        itemExtent: _kChannelTileHeight,
         itemCount: channels.length,
         itemBuilder: (context, i) => _ChannelTile(
           channel: channels[i],
-          store: store,
-          onChannelSelected: onChannelSelected,
+          store: widget.store,
+          onChannelSelected: widget.onChannelSelected,
           isTv: isTv,
           autofocus: isTv && i == 0,
-          focusNode: i == 0 ? initialChannelFocusNode : null,
+          focusNode: i == 0 ? widget.initialChannelFocusNode : null,
         ),
       );
     }
 
     return SizedBox(
-      width: compact ? null : 360,
+      width: widget.compact ? null : 360,
       child: Card(
         child: Column(
-          mainAxisSize: compact && !fullscreen
+          mainAxisSize: widget.compact && !widget.fullscreen
               ? MainAxisSize.min
               : MainAxisSize.max,
           children: [
@@ -63,20 +124,20 @@ class ChannelsPane extends StatelessWidget {
               dense: true,
               trailing: IconButton(
                 icon: Icon(
-                  store.channelSortOrder == ChannelSortOrder.byName
+                  widget.store.channelSortOrder == ChannelSortOrder.byName
                       ? Icons.sort_by_alpha
                       : Icons.sort,
                 ),
-                tooltip: store.channelSortOrder == ChannelSortOrder.byName
+                tooltip: widget.store.channelSortOrder == ChannelSortOrder.byName
                     ? 'Sort by name (tap to sort by index)'
                     : 'Sort by index (tap to sort by name)',
-                onPressed: () => store.toggleChannelSortOrder(),
+                onPressed: () => widget.store.toggleChannelSortOrder(),
               ),
             ),
-            if (!compact || fullscreen)
+            if (!widget.compact || widget.fullscreen)
               Expanded(child: buildList(shrinkWrap: false))
             else
-              SizedBox(height: 360, child: buildList(shrinkWrap: compact)),
+              SizedBox(height: 360, child: buildList(shrinkWrap: widget.compact)),
           ],
         ),
       ),

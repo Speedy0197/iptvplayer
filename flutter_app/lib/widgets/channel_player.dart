@@ -479,12 +479,23 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         });
   }
 
+  bool _wasMaximizedBeforeFullscreen = false;
+
   Future<void> _setNativeFullscreen(bool enabled) async {
     if (!Platform.isMacOS && !Platform.isWindows) return;
     try {
       final currentlyFullscreen = await windowManager.isFullScreen();
-      if (currentlyFullscreen != enabled) {
-        await windowManager.setFullScreen(enabled);
+      if (currentlyFullscreen == enabled) return;
+      if (enabled && Platform.isWindows) {
+        _wasMaximizedBeforeFullscreen = await windowManager.isMaximized();
+        if (_wasMaximizedBeforeFullscreen) {
+          await windowManager.unmaximize();
+        }
+      }
+      await windowManager.setFullScreen(enabled);
+      if (!enabled && Platform.isWindows && _wasMaximizedBeforeFullscreen) {
+        await windowManager.maximize();
+        _wasMaximizedBeforeFullscreen = false;
       }
     } catch (e) {
       debugPrint('Failed to toggle native fullscreen: $e');
