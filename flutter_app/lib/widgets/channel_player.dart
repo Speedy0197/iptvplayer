@@ -49,21 +49,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
   late Player _player;
   late VideoController _controller;
-  Player? _shadowPlayer;
   bool get _canPlayLocally =>
-      mounted &&
-      !widget.store.localPlaybackSuppressed &&
-      widget.store.nowPlaying?.streamUrl == widget.streamUrl;
-
-  void _onStoreChanged() {
-    if (!widget.store.localPlaybackSuppressed) return;
-    _openGeneration++;
-    _startupTimer?.cancel();
-    _recordingResumeTimer?.cancel();
-    unawaited(_player.pause());
-    final shadow = _shadowPlayer;
-    if (shadow != null) unawaited(shadow.pause());
-  }
+      mounted && widget.store.nowPlaying?.streamUrl == widget.streamUrl;
 
   final _videoKey = GlobalKey<VideoState>();
 
@@ -180,7 +167,6 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       ),
     );
     final shadowController = VideoController(shadowPlayer);
-    _shadowPlayer = shadowPlayer;
 
     try {
       await shadowPlayer.open(
@@ -232,7 +218,6 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       await shadowPlayer.dispose();
       return false;
     } finally {
-      _shadowPlayer = null;
       _backgroundHandoffInProgress = false;
     }
   }
@@ -312,14 +297,10 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _retryRequest.addListener(_retryPlayback);
     _player = widget.store.ensurePlayer();
     _controller = widget.store.videoController;
-    widget.store.addListener(_onStoreChanged);
     // Only treat the player as active if it is actually playing/buffering —
     // a stopped player (e.g. after navigating away) still needs a fresh open.
     final playerIsActive =
-        reusingPlayer &&
-        (_player.state.playing ||
-            _player.state.buffering ||
-            widget.store.restoredPlaybackStreamUrl == widget.streamUrl);
+        reusingPlayer && (_player.state.playing || _player.state.buffering);
     _loading = !playerIsActive;
 
     _bindPlayerStreams();
@@ -532,7 +513,6 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   @override
   void dispose() {
     _openGeneration++;
-    widget.store.removeListener(_onStoreChanged);
     WidgetsBinding.instance.removeObserver(this);
     _recordingResumeTimer?.cancel();
     _stalenessTimer?.cancel();
@@ -562,9 +542,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
             opaque: true,
             pageBuilder: (context, animation, secondaryAnimation) =>
                 _FullscreenChannelView(
-                  canPlayLocally: () =>
-                      !widget.store.localPlaybackSuppressed &&
-                      widget.store.hasPlayer,
+                  canPlayLocally: () => widget.store.hasPlayer,
                   player: _player,
                   controller: _controller,
                   playbackError: _playbackError,

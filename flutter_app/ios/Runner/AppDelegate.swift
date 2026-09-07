@@ -12,10 +12,5 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    if let airPlayRegistrar = engineBridge.pluginRegistry.registrar(
-      forPlugin: "AirPlayPlugin"
-    ) {
-      AirPlayPlugin.register(with: airPlayRegistrar)
-    }
   }
 }

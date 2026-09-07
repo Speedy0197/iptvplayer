@@ -8,6 +8,7 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'config/app_config.dart';
+import 'config/device_utils.dart';
 import 'config/ui_constants.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -15,13 +16,13 @@ import 'services/api_client.dart';
 import 'services/auth_store.dart';
 import 'services/playlist_store.dart';
 import 'services/version_service.dart';
-import 'widgets/casting/casting_scope.dart';
 
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
   try {
+    await initializeDeviceType();
     if (Platform.isMacOS || Platform.isWindows) {
       const minimumWindowSize = Size(kCompactBreakpoint + 1, 640);
       await windowManager.ensureInitialized();
@@ -45,16 +46,19 @@ Future<void> main() async {
     // Configure audio session in background — errors must not block startup.
     if (Platform.isIOS) {
       AudioSession.instance
-          .then((session) => session
-              .configure(AudioSessionConfiguration(
-                avAudioSessionCategory: AVAudioSessionCategory.playback,
-                avAudioSessionCategoryOptions:
-                    AVAudioSessionCategoryOptions.allowAirPlay |
+          .then(
+            (session) => session
+                .configure(
+                  AudioSessionConfiguration(
+                    avAudioSessionCategory: AVAudioSessionCategory.playback,
+                    avAudioSessionCategoryOptions:
                         AVAudioSessionCategoryOptions.allowBluetooth |
                         AVAudioSessionCategoryOptions.allowBluetoothA2dp,
-                avAudioSessionMode: AVAudioSessionMode.moviePlayback,
-              ))
-              .then((_) => session.setActive(true)))
+                    avAudioSessionMode: AVAudioSessionMode.moviePlayback,
+                  ),
+                )
+                .then((_) => session.setActive(true)),
+          )
           .ignore();
     }
 
@@ -202,7 +206,7 @@ class _AuthGateState extends State<_AuthGate> with WidgetsBindingObserver {
     }
 
     if (auth.isLoggedIn) {
-      return const CastingScope(child: HomeScreen());
+      return const HomeScreen();
     }
 
     return const LoginScreen();

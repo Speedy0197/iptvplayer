@@ -1,4 +1,3 @@
-# flutter_chrome_cast 1.4.8 requires iOS 15 or later.
 platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.

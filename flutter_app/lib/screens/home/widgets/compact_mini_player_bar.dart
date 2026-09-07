@@ -10,7 +10,6 @@ class CompactMiniPlayerBar extends StatelessWidget {
   final bool iosCompact;
   final VoidCallback onTap;
   final VoidCallback onStop;
-  final String? playbackLabel;
 
   const CompactMiniPlayerBar({
     super.key,
@@ -18,7 +17,6 @@ class CompactMiniPlayerBar extends StatelessWidget {
     required this.iosCompact,
     required this.onTap,
     required this.onStop,
-    this.playbackLabel,
   });
 
   @override
@@ -77,42 +75,34 @@ class CompactMiniPlayerBar extends StatelessWidget {
                                             fontWeight: FontWeight.w700,
                                           ),
                                         )),
-                            if (playbackLabel != null)
-                              Text(
-                                playbackLabel!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall,
-                              )
-                            else
-                              showDesktopTooltips
-                                  ? Tooltip(
-                                      message: channel.groupName,
-                                      child: Text(
-                                        channel.groupName,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodySmall,
-                                      ),
-                                    )
-                                  : (isPhone
-                                        ? AdaptiveSingleLineText(
-                                            text: channel.groupName,
-                                            minFontSize: 10,
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodySmall,
-                                          )
-                                        : Text(
-                                            channel.groupName,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodySmall,
-                                          )),
+                            showDesktopTooltips
+                                ? Tooltip(
+                                    message: channel.groupName,
+                                    child: Text(
+                                      channel.groupName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  )
+                                : (isPhone
+                                      ? AdaptiveSingleLineText(
+                                          text: channel.groupName,
+                                          minFontSize: 10,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        )
+                                      : Text(
+                                          channel.groupName,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        )),
                           ],
                         ),
                       ),
