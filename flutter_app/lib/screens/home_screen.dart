@@ -9,6 +9,7 @@ import '../config/ui_constants.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
+import '../widgets/channel_player.dart';
 import '../services/playlist_store.dart';
 import '../services/casting/casting_controller.dart';
 import '../widgets/casting/cast_button.dart';
@@ -28,6 +29,7 @@ import 'home/widgets/player_pane.dart';
 import 'home/widgets/playlist_management_view.dart';
 import 'home/widgets/search_result_tile.dart';
 import 'home/widgets/watch_playlists_pane.dart';
+import 'home/tv/tv_home_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -54,6 +56,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final PageController _compactFavoritesController;
   bool _searchDialogOpen = false;
   bool _searchDialogPending = false;
+  final _tvHomeKey = GlobalKey<TvHomeViewState>();
+  int _tvFullscreenRequest = 0;
 
   @override
   void initState() {
@@ -235,12 +239,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await _showSearchDialog();
   }
 
+  bool get _usesTvHome =>
+      context.read<CastingController?>() == null && isAndroidTv(context);
+
   Future<void> _jumpToSearchResult(SearchResultItem item) async {
     if (!mounted) return;
 
     final store = context.read<PlaylistStore>();
     final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
-    final isTv = isAndroidTv(context);
+    final isTv = _usesTvHome;
 
     try {
       if (_section != HomeSection.watch) {
@@ -254,23 +261,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             : store.selectedPlaylistId;
         if (groupPlaylistId != null) {
           if (store.selectedPlaylistId != groupPlaylistId) {
-            await store.selectPlaylist(groupPlaylistId);
+            await store.selectPlaylist(groupPlaylistId, preservePlayback: isTv);
           }
-          await store.selectGroup(g.name);
+          await store.selectGroup(g.name, preservePlayback: isTv);
         }
       } else {
         final c = item.channel!;
         if (store.selectedPlaylistId != c.playlistId) {
-          await store.selectPlaylist(c.playlistId);
+          await store.selectPlaylist(c.playlistId, preservePlayback: isTv);
         }
 
         final channelGroup = c.groupName.trim();
-        await store.selectGroup(channelGroup.isEmpty ? null : channelGroup);
-        await store.play(c);
+        await store.selectGroup(
+          channelGroup.isEmpty ? null : channelGroup,
+          preservePlayback: isTv,
+        );
+        if (!isTv) await store.play(c);
       }
 
       if (mounted) {
-        if (isCompact || isTv) {
+        if (isTv) {
+          _tvHomeKey.currentState?.reveal(channel: item.channel);
+          if (item.channel != null) await _playTvChannel(item.channel!);
+        } else if (isCompact) {
           await _goToCompactWatchPage(CompactWatchSection.viewChannels);
         }
       }
@@ -884,6 +897,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final store = context.watch<PlaylistStore>();
     final casting = context.watch<CastingController?>();
+    if (_usesTvHome) return _buildTvHome(store);
     final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
     final isSmallCompact = isCompact;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
@@ -1076,6 +1090,84 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             )
           : null,
+    );
+  }
+
+  Future<void> _playTvChannel(Channel channel) async {
+    final store = context.read<PlaylistStore>();
+    if (store.nowPlaying?.id != channel.id ||
+        store.nowPlaying?.playlistId != channel.playlistId) {
+      // Playback starts when ChannelPlayer receives the stream. EPG must never
+      // delay the fullscreen transition, and a failed EPG request is non-fatal.
+      unawaited(store.play(channel).catchError((Object _) {}));
+    }
+    if (mounted) setState(() => _tvFullscreenRequest++);
+  }
+
+  Widget _buildTvHome(PlaylistStore store) {
+    final playing = store.nowPlaying;
+    return TvHomeView(
+      key: _tvHomeKey,
+      store: store,
+      preview: playing == null
+          ? const Center(
+              child: Text(
+                'Select a channel to watch',
+                style: TextStyle(color: Colors.white60),
+              ),
+            )
+          : ChannelPlayer(
+              key: const ValueKey('tvPlayer'),
+              store: store,
+              streamUrl: playing.streamUrl,
+              resolveStreamUrl: () => store.resolveChannelStreamUrl(playing),
+              isActiveRecording: store.isChannelActivelyRecording(playing),
+              previewFocusable: false,
+              fullscreenRequest: _tvFullscreenRequest,
+              onFullscreenClosed: () {
+                if (!mounted) return;
+                setState(() => _tvFullscreenRequest = 0);
+                _tvHomeKey.currentState?.restoreChannelFocus();
+              },
+              onNextChannel: () => _tvHomeKey.currentState?.playAdjacent(1),
+              onPreviousChannel: () =>
+                  _tvHomeKey.currentState?.playAdjacent(-1),
+            ),
+      onWatch: _playTvChannel,
+      onSearch: _showSearchDialog,
+      onExit: () => SystemNavigator.pop(),
+      onManagePlaylists: () => showDialog<void>(
+        context: context,
+        builder: (ctx) => Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          child: SizedBox(
+            width: MediaQuery.sizeOf(ctx).width,
+            height: MediaQuery.sizeOf(ctx).height * .85,
+            child: ListenableBuilder(
+              listenable: store,
+              builder: (ctx, _) => PlaylistManagementView(
+                store: store,
+                onCreate: () => showPlaylistDialog(ctx),
+                onEdit: (p) => showPlaylistDialog(ctx, editing: p),
+                onRefresh: _refreshPlaylistWithFeedback,
+                onDelete: (p) => _confirmDeletePlaylist(ctx, p),
+              ),
+            ),
+          ),
+        ),
+      ),
+      onLogout: () async {
+        final confirmed = await showConfirmDialog(
+          context,
+          title: 'Log out',
+          message: 'Log out of StreamPilot?',
+          confirmLabel: 'Log out',
+          confirmIcon: Icons.logout,
+        );
+        if (confirmed == true && mounted) {
+          await context.read<AuthStore>().logout();
+        }
+      },
     );
   }
 }

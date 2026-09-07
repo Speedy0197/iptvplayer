@@ -46,7 +46,8 @@ play that selected source.
 ## Development verification
 
 Verified on Windows with Flutter 3.41.7 / Dart 3.11.5 on 2026-09-07:
-**112 Flutter tests passed**, full `flutter analyze` reported no issues, and
+**140 Flutter tests passed** after integrating the TV browser from `main`,
+full `flutter analyze` reported no issues, and
 the Android debug APK built successfully. The reviewed corrections include
 receiver switching, interrupted operations, native request failures, AirPlay
 output confirmation, recording recovery, and compact/tall/large-text layouts.

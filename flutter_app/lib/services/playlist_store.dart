@@ -84,15 +84,20 @@ class PlaylistStore extends ChangeNotifier {
     loadingEpg = true;
     notifyListeners();
     try {
-      final cached = _vuplusEpgCache[serviceRef];
+      final playlist = selectedPlaylist;
+      if (playlist == null) {
+        throw const ApiException('No selected playlist');
+      }
+      final cacheKey = _vuplusEpgCacheKey(playlist.id, serviceRef);
+      final cached = _vuplusEpgCache[cacheKey];
       if (cached != null &&
           DateTime.now().difference(cached.fetchedAt) < _vuplusEpgCacheTtl) {
         epgEntries = cached.entries;
       } else {
-        final vuplusApi = _selectedVuplusApi();
+        final vuplusApi = _vuplusApiForPlaylist(playlist);
         final xml = await vuplusApi.fetchEpg(serviceRef);
         epgEntries = _parseVuplusEpg(xml, serviceRef);
-        _vuplusEpgCache[serviceRef] = (
+        _vuplusEpgCache[cacheKey] = (
           fetchedAt: DateTime.now(),
           entries: epgEntries,
         );
@@ -113,8 +118,10 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   // Add timer directly to VU+
-  Future<void> recordEpgEntry(EpgEntry entry) async {
-    final vuplusApi = _selectedVuplusApi();
+  Future<void> recordEpgEntry(EpgEntry entry, {int? playlistId}) async {
+    final vuplusApi = playlistId == null
+        ? _selectedVuplusApi()
+        : _vuplusApiForPlaylist(_playlistById(playlistId));
     final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
     final endUnix = entry.endTime.toUtc().millisecondsSinceEpoch ~/ 1000;
     final key = _timerKeyFromServiceRefAndBegin(entry.channelEpgId, beginUnix);
@@ -131,13 +138,17 @@ class PlaylistStore extends ChangeNotifier {
       // Add other timer params as needed
     });
 
-    _timerKeys = Set.from(_timerKeys)..add(key);
-    notifyListeners();
+    if (_shouldUpdateTimerState(playlistId)) {
+      _timerKeys = Set.from(_timerKeys)..add(key);
+      notifyListeners();
+    }
   }
 
   // Remove timer directly from VU+
-  Future<void> removeEpgTimer(EpgEntry entry) async {
-    final vuplusApi = _selectedVuplusApi();
+  Future<void> removeEpgTimer(EpgEntry entry, {int? playlistId}) async {
+    final vuplusApi = playlistId == null
+        ? _selectedVuplusApi()
+        : _vuplusApiForPlaylist(_playlistById(playlistId));
     final beginUnix = entry.startTime.toUtc().millisecondsSinceEpoch ~/ 1000;
 
     // Use exact values from timerlist; OpenWebif delete can require matching end.
@@ -178,9 +189,18 @@ class PlaylistStore extends ChangeNotifier {
     }
 
     final refreshedTimersXml = await vuplusApi.fetchTimers();
-    _vuplusTimerList = _parseVuplusTimers(refreshedTimersXml);
-    _timerKeys = _parseVuplusTimerKeys(refreshedTimersXml);
-    notifyListeners();
+    if (_shouldUpdateTimerState(playlistId)) {
+      _vuplusTimerList = _parseVuplusTimers(refreshedTimersXml);
+      _timerKeys = _parseVuplusTimerKeys(refreshedTimersXml);
+      notifyListeners();
+    }
+  }
+
+  bool _shouldUpdateTimerState(int? explicitPlaylistId) {
+    if (explicitPlaylistId == null) {
+      return true;
+    }
+    return (nowPlaying?.playlistId ?? selectedPlaylistId) == explicitPlaylistId;
   }
 
   // Get picon URL for a service
@@ -1093,6 +1113,8 @@ class PlaylistStore extends ChangeNotifier {
   // the player.
   Player? _player;
   VideoController? _videoController;
+  final playbackError = ValueNotifier<String?>(null);
+  final playbackRetryRequest = ValueNotifier<int>(0);
 
   Player get player => _player!;
   VideoController get videoController => _videoController!;
@@ -1155,12 +1177,15 @@ class PlaylistStore extends ChangeNotifier {
     if (p != null) {
       unawaited(p.stop().then((_) => p.dispose()));
     }
+    playbackError.dispose();
+    playbackRetryRequest.dispose();
     super.dispose();
   }
 
   bool loadingPlaylists = false;
   bool loadingGroups = false;
   bool loadingChannels = false;
+  String? channelsError;
   bool loadingGlobalSearch = false;
   bool loadingFavoriteChannels = false;
   bool loadingFavoriteGroups = false;
@@ -1169,6 +1194,9 @@ class PlaylistStore extends ChangeNotifier {
   bool epgSourceMissing = false;
   final Set<int> _refreshingPlaylistIds = <int>{};
   ChannelSortOrder channelSortOrder = ChannelSortOrder.byIndex;
+  int _groupsRequestGeneration = 0;
+  int _channelsRequestGeneration = 0;
+  int _playRequestGeneration = 0;
 
   bool isRefreshingPlaylist(int id) => _refreshingPlaylistIds.contains(id);
 
@@ -1275,6 +1303,10 @@ class PlaylistStore extends ChangeNotifier {
       return '${parts.take(10).join(':')}:';
     }
     return decoded;
+  }
+
+  String _vuplusEpgCacheKey(int playlistId, String serviceRef) {
+    return '$playlistId:${_normalizeServiceRef(serviceRef)}';
   }
 
   String _timerKeyFromServiceRefAndBegin(String serviceRef, int beginUnix) {
@@ -1466,6 +1498,7 @@ class PlaylistStore extends ChangeNotifier {
         selectedPlaylistId = null;
         groups = const [];
         channels = const [];
+        channelsError = null;
       }
     } finally {
       loadingPlaylists = false;
@@ -1473,13 +1506,20 @@ class PlaylistStore extends ChangeNotifier {
     }
   }
 
-  Future<void> selectPlaylist(int playlistId) async {
-    if (nowPlaying != null) _stopPlayer();
+  Future<void> selectPlaylist(
+    int playlistId, {
+    bool preservePlayback = false,
+  }) async {
+    if (!preservePlayback && nowPlaying != null) _stopPlayer();
     selectedPlaylistId = playlistId;
     selectedGroup = null;
-    epgEntries = const [];
-    epgSourceMissing = false;
-    nowPlaying = null;
+    channelsError = null;
+    if (!preservePlayback) {
+      epgEntries = const [];
+      epgSourceMissing = false;
+      loadingEpg = false;
+      nowPlaying = null;
+    }
     notifyListeners();
 
     await Future.wait([
@@ -1489,14 +1529,24 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   Future<void> fetchGroups(int playlistId) async {
+    final requestGeneration = ++_groupsRequestGeneration;
     if (!_favoriteGroupsLoaded && !loadingFavoriteGroups) {
       await fetchFavoriteGroups();
+    }
+
+    if (requestGeneration != _groupsRequestGeneration ||
+        selectedPlaylistId != playlistId) {
+      return;
     }
 
     loadingGroups = true;
     notifyListeners();
     try {
       final playlistChannels = await _getOrLoadPlaylistChannels(playlistId);
+      if (requestGeneration != _groupsRequestGeneration ||
+          selectedPlaylistId != playlistId) {
+        return;
+      }
       final counts = <String, int>{};
       for (final channel in playlistChannels) {
         final groupName = channel.groupName.trim().isEmpty
@@ -1517,49 +1567,126 @@ class PlaylistStore extends ChangeNotifier {
           ),
         ),
       );
-    } catch (e) {
-      groups = const [];
-      debugPrint('Failed to fetch groups for playlist $playlistId: $e');
+    } catch (_) {
+      if (requestGeneration == _groupsRequestGeneration &&
+          selectedPlaylistId == playlistId) {
+        groups = const [];
+        debugPrint('Failed to fetch groups for playlist $playlistId');
+      }
     } finally {
-      loadingGroups = false;
-      notifyListeners();
+      if (requestGeneration == _groupsRequestGeneration) {
+        loadingGroups = false;
+        notifyListeners();
+      }
     }
   }
 
-  Future<void> selectGroup(String? group) async {
+  Future<void> selectGroup(
+    String? group, {
+    bool preservePlayback = false,
+  }) async {
     selectedGroup = group;
+    channelsError = null;
     // Changing groups is a browse action; require an explicit channel tap
     // (or search channel result) to start playback again.
-    if (nowPlaying != null) _stopPlayer();
-    nowPlaying = null;
-    epgEntries = const [];
-    epgSourceMissing = false;
-    loadingEpg = false;
+    if (!preservePlayback) {
+      if (nowPlaying != null) _stopPlayer();
+      nowPlaying = null;
+      epgEntries = const [];
+      epgSourceMissing = false;
+      loadingEpg = false;
+    }
     notifyListeners();
     if (selectedPlaylistId == null) return;
     await fetchChannels(selectedPlaylistId!, group);
   }
 
   Future<void> fetchChannels(int playlistId, String? group) async {
+    final requestedGroup = (group ?? '').trim();
+    if (selectedPlaylistId != playlistId ||
+        (selectedGroup ?? '').trim() != requestedGroup) {
+      return;
+    }
+    final requestGeneration = ++_channelsRequestGeneration;
+    channelsError = null;
     loadingChannels = true;
     notifyListeners();
     try {
       final playlistChannels = await _getOrLoadPlaylistChannels(playlistId);
-      final selected = (group ?? '').trim();
-      final filtered = selected.isEmpty
+      if (requestGeneration != _channelsRequestGeneration ||
+          selectedPlaylistId != playlistId ||
+          (selectedGroup ?? '').trim() != requestedGroup) {
+        return;
+      }
+      final filtered = requestedGroup.isEmpty
           ? playlistChannels
-          : playlistChannels.where((c) => c.groupName == selected).toList();
+          : playlistChannels
+                .where((c) => c.groupName == requestedGroup)
+                .toList();
       channels = sortChannels(filtered, channelSortOrder);
-    } catch (e) {
-      channels = const [];
-      debugPrint('Failed to fetch channels for playlist $playlistId: $e');
+    } catch (_) {
+      if (requestGeneration == _channelsRequestGeneration &&
+          selectedPlaylistId == playlistId &&
+          (selectedGroup ?? '').trim() == requestedGroup) {
+        channels = const [];
+        channelsError = 'Could not load channels. Select the group to retry.';
+        debugPrint('Failed to fetch channels for playlist $playlistId');
+      }
     } finally {
-      loadingChannels = false;
-      notifyListeners();
+      if (requestGeneration == _channelsRequestGeneration) {
+        loadingChannels = false;
+        notifyListeners();
+      }
     }
   }
 
+  Future<List<EpgEntry>> loadChannelEpg(Channel channel) async {
+    final effectiveEpgChannelId = channel.epgChannelId.isNotEmpty
+        ? channel.epgChannelId
+        : channel.streamId;
+    if (effectiveEpgChannelId.isEmpty) {
+      return const [];
+    }
+
+    final playlist = _playlistById(channel.playlistId);
+    final isVuplusRecording =
+        playlist.type == 'vuplus' &&
+        channel.groupName.trim().toLowerCase() == 'aufnahmen';
+    if (isVuplusRecording) {
+      return const [];
+    }
+
+    if (playlist.type == 'vuplus') {
+      final cacheKey = _vuplusEpgCacheKey(playlist.id, effectiveEpgChannelId);
+      final cachedVuplus = _vuplusEpgCache[cacheKey];
+      if (cachedVuplus != null &&
+          DateTime.now().difference(cachedVuplus.fetchedAt) <
+              _vuplusEpgCacheTtl) {
+        return cachedVuplus.entries;
+      }
+
+      final vuplusApi = _vuplusApiForPlaylist(playlist);
+      final epgXml = await vuplusApi.fetchEpg(effectiveEpgChannelId);
+      final loaded = _parseVuplusEpg(epgXml, effectiveEpgChannelId);
+      _vuplusEpgCache[cacheKey] = (fetchedAt: DateTime.now(), entries: loaded);
+      return loaded;
+    }
+
+    return _loadXmltvEpgForChannel(playlist, channel);
+  }
+
+  Future<List<VuplusTimer>> loadChannelTimers(Channel channel) async {
+    final playlist = _playlistById(channel.playlistId);
+    if (playlist.type != 'vuplus') {
+      return const [];
+    }
+    final vuplusApi = _vuplusApiForPlaylist(playlist);
+    final timersXml = await vuplusApi.fetchTimers();
+    return _parseVuplusTimers(timersXml);
+  }
+
   Future<void> play(Channel channel) async {
+    final requestGeneration = ++_playRequestGeneration;
     nowPlaying = channel;
     epgEntries = const [];
     epgSourceMissing = false;
@@ -1584,13 +1711,20 @@ class PlaylistStore extends ChangeNotifier {
       loadingEpg = true;
       notifyListeners();
       try {
+        final vuplusApi = _vuplusApiForPlaylist(playlist);
+        final timersXml = await vuplusApi.fetchTimers();
+        if (!_isCurrentPlayRequest(requestGeneration, channel)) {
+          return;
+        }
+        _vuplusTimerList = _parseVuplusTimers(timersXml);
+        _timerKeys = _parseVuplusTimerKeys(timersXml);
         epgEntries = const [];
         epgSourceMissing = true;
-        // Fetch timers so isChannelActivelyRecording() can match this recording.
-        await fetchTimersFromVuplus();
       } finally {
-        loadingEpg = false;
-        notifyListeners();
+        if (_isCurrentPlayRequest(requestGeneration, channel)) {
+          loadingEpg = false;
+          notifyListeners();
+        }
       }
       return;
     }
@@ -1598,40 +1732,49 @@ class PlaylistStore extends ChangeNotifier {
     loadingEpg = true;
     notifyListeners();
     try {
+      final loadedEpg = await loadChannelEpg(channel);
+      if (!_isCurrentPlayRequest(requestGeneration, channel)) {
+        return;
+      }
       if (playlist.type == 'vuplus') {
         final vuplusApi = _vuplusApiForPlaylist(playlist);
-        final cachedVuplus = _vuplusEpgCache[effectiveEpgChannelId];
-        if (cachedVuplus != null &&
-            DateTime.now().difference(cachedVuplus.fetchedAt) <
-                _vuplusEpgCacheTtl) {
-          epgEntries = cachedVuplus.entries;
-        } else {
-          final epgXml = await vuplusApi.fetchEpg(effectiveEpgChannelId);
-          epgEntries = _parseVuplusEpg(epgXml, effectiveEpgChannelId);
-          _vuplusEpgCache[effectiveEpgChannelId] = (
-            fetchedAt: DateTime.now(),
-            entries: epgEntries,
-          );
-        }
-
         try {
           final timersXml = await vuplusApi.fetchTimers();
+          if (!_isCurrentPlayRequest(requestGeneration, channel)) {
+            return;
+          }
           _vuplusTimerList = _parseVuplusTimers(timersXml);
           _timerKeys = _parseVuplusTimerKeys(timersXml);
         } catch (_) {
+          if (!_isCurrentPlayRequest(requestGeneration, channel)) {
+            return;
+          }
           _vuplusTimerList = const [];
           _timerKeys = {};
         }
       } else {
-        epgEntries = await _loadXmltvEpgForChannel(playlist, channel);
         _timerKeys = {};
       }
 
+      if (!_isCurrentPlayRequest(requestGeneration, channel)) {
+        return;
+      }
+      epgEntries = loadedEpg;
       epgSourceMissing = epgEntries.isEmpty;
     } finally {
-      loadingEpg = false;
-      notifyListeners();
+      if (_isCurrentPlayRequest(requestGeneration, channel)) {
+        loadingEpg = false;
+        notifyListeners();
+      }
     }
+  }
+
+  bool _isCurrentPlayRequest(int requestGeneration, Channel channel) {
+    final current = nowPlaying;
+    return requestGeneration == _playRequestGeneration &&
+        current != null &&
+        current.playlistId == channel.playlistId &&
+        current.streamId == channel.streamId;
   }
 
   void stopPlayback() {
@@ -1665,8 +1808,11 @@ class PlaylistStore extends ChangeNotifier {
       final refreshedCount = loaded.length;
 
       if (selectedPlaylistId == id) {
+        final group = selectedGroup;
         await fetchGroups(id);
-        await fetchChannels(id, selectedGroup);
+        if (selectedPlaylistId == id && selectedGroup == group) {
+          await fetchChannels(id, group);
+        }
       }
       _globalGroups = const [];
       _globalChannels = const [];
@@ -2069,6 +2215,7 @@ class PlaylistStore extends ChangeNotifier {
       groups = const [];
       nowPlaying = null;
       epgEntries = const [];
+      channelsError = null;
     }
     await fetchPlaylists();
     await fetchFavoriteChannels();

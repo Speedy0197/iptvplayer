@@ -4,8 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_app/models/models.dart';
 import 'package:flutter_app/screens/home_screen.dart';
-import 'package:flutter_app/screens/home/widgets/player_pane.dart';
 import 'package:flutter_app/screens/home/widgets/home_search_bar.dart';
+import 'package:flutter_app/screens/home/widgets/compact_watch_section.dart';
 import 'package:flutter_app/services/casting/casting_controller.dart';
 import 'package:flutter_app/services/playlist_store.dart';
 import 'package:flutter_app/widgets/casting/cast_button.dart';
@@ -37,54 +37,73 @@ void main() {
     controller.dispose();
     semantics.dispose();
   });
-  testWidgets(
-    'tall Android phone shows actual remote PlayerPane without overflow',
-    (tester) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
-      tester.view.physicalSize = const Size(390, 1000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final store = EmptyStore()
-        ..nowPlaying = const Channel(
-          id: 1,
-          playlistId: 1,
-          streamId: 'one',
-          name: 'News',
-          groupName: 'TV',
-          streamUrl: 'https://example.test/live',
-          logoUrl: '',
-          epgChannelId: 'one',
-          isFavorite: false,
-        );
-      final controller = (await tester.runAsync(() async {
-        final controller = CastingController(
-          local: LocalPlayback(),
-          transports: [Receiver()],
-        );
-        await controller.connect(shield);
-        return controller;
-      }))!;
-      await tester.pumpWidget(
-        ChangeNotifierProvider<CastingController>.value(
-          value: controller,
-          child: MaterialApp(
-            home: Scaffold(body: PlayerPane(store: store)),
-          ),
-        ),
+  testWidgets('tall Android phone keeps the casting home and remote player', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    tester.view.physicalSize = const Size(390, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final store = SearchStore()
+      ..selectedPlaylistId = 1
+      ..nowPlaying = const Channel(
+        id: 1,
+        playlistId: 1,
+        streamId: 'one',
+        name: 'News',
+        groupName: 'TV',
+        streamUrl: 'https://example.test/live',
+        logoUrl: '',
+        epgChannelId: 'one',
+        isFavorite: false,
       );
-      await tester.pump();
-      expect(find.byType(CastPlayerSurface), findsOneWidget);
-      expect(find.text('EPG'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.runAsync(controller.shutdown);
-      controller.dispose();
-      store.dispose();
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    final controller = (await tester.runAsync(() async {
+      final controller = CastingController(
+        local: LocalPlayback(),
+        transports: [Receiver()],
+      );
+      await controller.connect(shield);
+      return controller;
+    }))!;
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<PlaylistStore>.value(value: store),
+          ChangeNotifierProvider<CastingController>.value(value: controller),
+        ],
+        child: const MaterialApp(home: HomeScreen()),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(HomeSearchBar), findsOneWidget);
+    expect(find.byType(CastButton), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.smart_display).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(CastPlayerSurface), findsOneWidget);
+    expect(find.text('EPG'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    tester.widget<HomeSearchBar>(find.byType(HomeSearchBar)).onTap();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), 'News');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'News results'));
+    await tester.pumpAndSettle();
+    expect(store.preservedPlayback, isFalse);
+    expect(
+      tester
+          .widget<CompactWatchSection>(find.byType(CompactWatchSection))
+          .currentPage,
+      CompactWatchSection.viewChannels,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(controller.shutdown);
+    controller.dispose();
+    store.dispose();
+    debugDefaultTargetPlatformOverride = null;
+  });
   testWidgets(
     '320px home keeps header search selector and Cast at 1.5 text scale',
     (tester) async {
@@ -131,4 +150,31 @@ void main() {
       store.dispose();
     },
   );
+}
+
+class SearchStore extends EmptyStore {
+  bool? preservedPlayback;
+
+  @override
+  Future<void> ensureGlobalSearchData() async {}
+
+  @override
+  List<Group> get globalFilteredGroups => const [
+    Group(
+      name: 'News results',
+      playlistId: 1,
+      channelCount: 1,
+      isFavorite: false,
+    ),
+  ];
+
+  @override
+  Future<void> selectGroup(
+    String? group, {
+    bool preservePlayback = false,
+  }) async {
+    preservedPlayback = preservePlayback;
+    selectedGroup = group;
+    notifyListeners();
+  }
 }
