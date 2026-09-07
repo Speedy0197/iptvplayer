@@ -73,6 +73,31 @@ class VuplusApi {
     return await get('/web/getservices', params);
   }
 
+  /// Let OpenWebif select the service's stream port, relay and authentication.
+  Future<String> resolveStreamUrl(String serviceRef) async {
+    final String body = await get('/web/stream.m3u', {
+      'ref': serviceRef,
+    }).timeout(const Duration(seconds: 8));
+    final lines = const LineSplitter()
+        .convert(body.replaceFirst(RegExp(r'^\uFEFF'), '').trim())
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty);
+    if (lines.isEmpty || lines.first != '#EXTM3U') {
+      throw const FormatException('Invalid OpenWebif stream playlist');
+    }
+    for (final line in lines.skip(1)) {
+      if (line.startsWith('#')) continue;
+      final uri = Uri.tryParse(line);
+      if (uri != null &&
+          (uri.scheme == 'http' || uri.scheme == 'https') &&
+          uri.host.isNotEmpty) {
+        return line;
+      }
+      break;
+    }
+    throw const FormatException('OpenWebif returned no playable stream URL');
+  }
+
   // Fetch EPG for a service
   Future<String> fetchEpg(String serviceRef) async {
     return await get('/web/epgservice', {'sRef': serviceRef});

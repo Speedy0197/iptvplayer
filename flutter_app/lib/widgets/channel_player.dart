@@ -13,6 +13,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 class ChannelPlayer extends StatefulWidget {
   final PlaylistStore store;
   final String streamUrl;
+  final Future<String> Function()? resolveStreamUrl;
   final bool isActiveRecording;
   final VoidCallback? onNextChannel;
   final VoidCallback? onPreviousChannel;
@@ -21,6 +22,7 @@ class ChannelPlayer extends StatefulWidget {
     super.key,
     required this.store,
     required this.streamUrl,
+    this.resolveStreamUrl,
     this.isActiveRecording = false,
     this.onNextChannel,
     this.onPreviousChannel,
@@ -52,6 +54,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   Timer? _stalenessTimer;
 
   int _attempt = 0;
+  int _openGeneration = 0;
+  bool _resolvingStream = false;
   bool _loading = true;
   String? _error;
   bool _inFullscreen = false;
@@ -84,6 +88,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       // media_kit_video's fullscreen route can pause the player on any
       // lifecycle transition. Only honour a pause when truly backgrounded.
       if (!playing &&
+          !_resolvingStream &&
           Platform.isIOS &&
           _inFullscreen &&
           _lifecycleState != AppLifecycleState.paused) {
@@ -91,7 +96,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         return;
       }
 
-      if (playing) {
+      if (playing && !_resolvingStream) {
         _startupTimer?.cancel();
         setState(() {
           _loading = false;
@@ -103,7 +108,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _bufferingSub = _player.stream.buffering.listen((buffering) {
       if (!mounted) return;
       setState(() {
-        _loading = buffering;
+        _loading = _resolvingStream || buffering;
       });
     });
 
@@ -274,8 +279,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     // Only treat the player as active if it is actually playing/buffering —
     // a stopped player (e.g. after navigating away) still needs a fresh open.
     final playerIsActive =
-        reusingPlayer &&
-        (_player.state.playing || _player.state.buffering);
+        reusingPlayer && (_player.state.playing || _player.state.buffering);
     _loading = !playerIsActive;
 
     _bindPlayerStreams();
@@ -385,6 +389,15 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }
 
   Future<void> _openCurrentStream({required bool resetAttempts}) async {
+    final generation = ++_openGeneration;
+    final resolveStreamUrl = widget.resolveStreamUrl;
+    final originalUrl = widget.streamUrl;
+    bool isCurrentOpen() =>
+        mounted &&
+        generation == _openGeneration &&
+        widget.store.nowPlaying?.streamUrl == originalUrl;
+    if (!isCurrentOpen()) return;
+    _resolvingStream = resolveStreamUrl != null;
     if (resetAttempts) {
       _attempt = 0;
       _lastKnownPosition = Duration.zero;
@@ -403,15 +416,28 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     }
 
     _startupTimer = Timer(_startupTimeout, () {
-      _handleFailure('Timed out while opening stream.');
+      if (isCurrentOpen()) {
+        _handleFailure('Timed out while opening stream.');
+      }
     });
 
     try {
-      await _player.open(
-        Media(widget.streamUrl, httpHeaders: _streamHeaders),
-        play: true,
-      );
+      // Stop the previous channel while OpenWebif prepares the next stream.
+      // A late response must not reopen a channel the user has switched away
+      // from (or a previous attempt superseded by a retry).
+      if (resolveStreamUrl != null) {
+        await _player.stop();
+        if (!isCurrentOpen()) return;
+      }
+      final url = resolveStreamUrl == null
+          ? originalUrl
+          : await resolveStreamUrl();
+      if (!isCurrentOpen()) return;
+      _resolvingStream = false;
+      await _player.open(Media(url, httpHeaders: _streamHeaders), play: true);
     } catch (_) {
+      if (!isCurrentOpen()) return;
+      _resolvingStream = false;
       _handleFailure('Could not open stream.');
     }
   }
@@ -434,6 +460,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
   @override
   void dispose() {
+    _openGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     _recordingResumeTimer?.cancel();
     _stalenessTimer?.cancel();

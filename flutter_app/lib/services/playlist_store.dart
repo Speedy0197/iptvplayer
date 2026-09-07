@@ -1176,6 +1176,29 @@ class PlaylistStore extends ChangeNotifier {
 
   bool get isSelectedPlaylistVuplus => selectedPlaylist?.type == 'vuplus';
 
+  Future<String> resolveChannelStreamUrl(Channel channel) async {
+    // Resolve at playback time so cached channels and favourites also honour
+    // OpenWebif's per-service routing and receive fresh stream credentials.
+    final playlist = playlists
+        .where((playlist) => playlist.id == channel.playlistId)
+        .firstOrNull;
+    if (playlist?.type != 'vuplus' ||
+        channel.groupName.trim().toLowerCase() == 'aufnahmen' ||
+        channel.streamId.isEmpty) {
+      return channel.streamUrl;
+    }
+    try {
+      return await _vuplusApiForPlaylist(
+        playlist!,
+      ).resolveStreamUrl(channel.streamId);
+    } catch (_) {
+      // Older receivers may not expose stream.m3u. Keep the existing direct
+      // stream as a fallback; never log URLs containing receiver credentials.
+      debugPrint('VU+ stream resolution unavailable; using direct stream.');
+    }
+    return channel.streamUrl;
+  }
+
   String _favoriteSourceKey(int playlistId, String streamId) {
     return '$playlistId:${streamId.trim().toLowerCase()}';
   }

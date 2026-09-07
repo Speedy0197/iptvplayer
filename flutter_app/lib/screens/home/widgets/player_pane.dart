@@ -207,6 +207,8 @@ class PlayerPane extends StatelessWidget {
                               child: ChannelPlayer(
                                 store: store,
                                 streamUrl: channel.streamUrl,
+                                resolveStreamUrl: () =>
+                                    store.resolveChannelStreamUrl(channel),
                                 isActiveRecording: store
                                     .isChannelActivelyRecording(channel),
                                 onNextChannel: _playNextChannel,
@@ -246,6 +248,8 @@ class PlayerPane extends StatelessWidget {
                           child: ChannelPlayer(
                             store: store,
                             streamUrl: channel.streamUrl,
+                            resolveStreamUrl: () =>
+                                store.resolveChannelStreamUrl(channel),
                             isActiveRecording: store.isChannelActivelyRecording(
                               channel,
                             ),
