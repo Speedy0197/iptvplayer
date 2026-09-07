@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../../config/device_utils.dart';
 import '../../../config/ui_constants.dart';
 import '../../../models/models.dart';
 import '../../../services/playlist_store.dart';
+import '../../../services/casting/casting_controller.dart';
+import '../../../widgets/casting/cast_player_surface.dart';
 import '../../../widgets/adaptive_single_line_text.dart';
 import '../../../widgets/channel_player.dart';
 import '../../../widgets/tv_focusable_tile.dart';
@@ -74,8 +77,11 @@ class PlayerPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final casting = context.watch<CastingController?>();
     final Channel? channel = store.nowPlaying;
-    final isTv = isAndroidTv(context);
+    // A controller is provided only on supported phone senders. Tall phones
+    // must keep the phone layout even when the legacy size heuristic says TV.
+    final isTv = casting == null && isAndroidTv(context);
     final isPhone = isIosOrAndroidPhone(context);
     final showDesktopTooltips = isMacOrWindowsDesktop();
     final epgLimit = isTv ? kTvEpgEntriesToShow : kDesktopEpgEntriesToShow;
@@ -245,17 +251,22 @@ class PlayerPane extends StatelessWidget {
                         child: SizedBox(
                           width: maxPlayerWidth,
                           height: playerHeight,
-                          child: ChannelPlayer(
-                            store: store,
-                            streamUrl: channel.streamUrl,
-                            resolveStreamUrl: () =>
-                                store.resolveChannelStreamUrl(channel),
-                            isActiveRecording: store.isChannelActivelyRecording(
-                              channel,
-                            ),
-                            onNextChannel: _playNextChannel,
-                            onPreviousChannel: _playPreviousChannel,
-                          ),
+                          child: casting?.ownsPlayback == true
+                              ? CastPlayerSurface(
+                                  controller: casting!,
+                                  onNextChannel: _playNextChannel,
+                                  onPreviousChannel: _playPreviousChannel,
+                                )
+                              : ChannelPlayer(
+                                  store: store,
+                                  streamUrl: channel.streamUrl,
+                                  resolveStreamUrl: () =>
+                                      store.resolveChannelStreamUrl(channel),
+                                  isActiveRecording: store
+                                      .isChannelActivelyRecording(channel),
+                                  onNextChannel: _playNextChannel,
+                                  onPreviousChannel: _playPreviousChannel,
+                                ),
                         ),
                       ),
                       const SizedBox(height: 12),

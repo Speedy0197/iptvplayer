@@ -10,6 +10,9 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
 import '../services/playlist_store.dart';
+import '../services/casting/casting_controller.dart';
+import '../widgets/casting/cast_button.dart';
+import '../widgets/casting/cast_player_surface.dart';
 import 'home/dialogs/confirm_dialog.dart';
 import 'home/dialogs/playlist_dialog.dart';
 import 'home/home_types.dart';
@@ -192,7 +195,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
 
     if (shouldLogout == true && mounted) {
-      await context.read<AuthStore>().logout();
+      final auth = context.read<AuthStore>();
+      final casting = context.read<CastingController?>();
+      context.read<PlaylistStore>().stopPlayback();
+      await casting?.shutdown();
+      await auth.logout();
     }
   }
 
@@ -876,6 +883,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final store = context.watch<PlaylistStore>();
+    final casting = context.watch<CastingController?>();
     final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
     final isSmallCompact = isCompact;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
@@ -985,6 +993,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     )
                   : null,
               actions: [
+                if (casting != null) CastButton(controller: casting),
                 if (!isSmallCompact)
                   IconButton(
                     tooltip: 'Search',
@@ -1011,6 +1020,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ? CompactMiniPlayerBar(
                           channel: store.nowPlaying!,
                           iosCompact: isSmallCompact,
+                          playbackLabel: casting?.ownsPlayback == true
+                              ? castStatusLabel(casting!)
+                              : null,
                           onTap: () => _openCompactPlayer(store),
                           onStop: store.stopPlayback,
                         )

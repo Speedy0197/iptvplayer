@@ -1098,6 +1098,16 @@ class PlaylistStore extends ChangeNotifier {
   VideoController get videoController => _videoController!;
   bool get hasPlayer => _player != null;
 
+  bool _localPlaybackSuppressed = false;
+  bool get localPlaybackSuppressed => _localPlaybackSuppressed;
+  String? restoredPlaybackStreamUrl;
+
+  void setLocalPlaybackSuppressed(bool value, {bool notify = true}) {
+    if (_localPlaybackSuppressed == value) return;
+    _localPlaybackSuppressed = value;
+    if (notify) notifyListeners();
+  }
+
   Player ensurePlayer() {
     final existing = _player;
     if (existing != null) return existing;
@@ -1130,6 +1140,7 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   void _stopPlayer() {
+    restoredPlaybackStreamUrl = null;
     final p = _player;
     if (p != null) unawaited(p.stop());
   }

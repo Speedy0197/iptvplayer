@@ -15,6 +15,7 @@ import 'services/api_client.dart';
 import 'services/auth_store.dart';
 import 'services/playlist_store.dart';
 import 'services/version_service.dart';
+import 'widgets/casting/casting_scope.dart';
 
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
@@ -201,7 +202,7 @@ class _AuthGateState extends State<_AuthGate> with WidgetsBindingObserver {
     }
 
     if (auth.isLoggedIn) {
-      return const HomeScreen();
+      return const CastingScope(child: HomeScreen());
     }
 
     return const LoginScreen();

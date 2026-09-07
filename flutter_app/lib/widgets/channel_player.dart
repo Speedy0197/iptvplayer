@@ -43,6 +43,22 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
   late Player _player;
   late VideoController _controller;
+  Player? _shadowPlayer;
+  bool get _canPlayLocally =>
+      mounted &&
+      !widget.store.localPlaybackSuppressed &&
+      widget.store.nowPlaying?.streamUrl == widget.streamUrl;
+
+  void _onStoreChanged() {
+    if (!widget.store.localPlaybackSuppressed) return;
+    _openGeneration++;
+    _startupTimer?.cancel();
+    _recordingResumeTimer?.cancel();
+    unawaited(_player.pause());
+    final shadow = _shadowPlayer;
+    if (shadow != null) unawaited(shadow.pause());
+  }
+
   final _videoKey = GlobalKey<VideoState>();
 
   StreamSubscription<bool>? _playingSub;
@@ -82,7 +98,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _completedSub?.cancel();
 
     _playingSub = _player.stream.playing.listen((playing) {
-      if (!mounted) return;
+      if (!_canPlayLocally) return;
 
       // While in fullscreen on iOS, the inner Video widget created by
       // media_kit_video's fullscreen route can pause the player on any
@@ -136,15 +152,15 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }) async {
     final endAt = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(endAt)) {
-      if (!mounted) return false;
+      if (!_canPlayLocally) return false;
       if (player.state.position > baseline) return true;
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
-    return player.state.position > baseline;
+    return _canPlayLocally && player.state.position > baseline;
   }
 
   Future<bool> _tryBackgroundHandoff(Duration resumeAt) async {
-    if (_backgroundHandoffInProgress || !mounted) return false;
+    if (_backgroundHandoffInProgress || !_canPlayLocally) return false;
     _backgroundHandoffInProgress = true;
 
     final shadowPlayer = Player(
@@ -155,6 +171,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       ),
     );
     final shadowController = VideoController(shadowPlayer);
+    _shadowPlayer = shadowPlayer;
 
     try {
       await shadowPlayer.open(
@@ -166,11 +183,14 @@ class _ChannelPlayerState extends State<ChannelPlayer>
           .firstWhere((d) => d > Duration.zero)
           .timeout(const Duration(seconds: 6));
 
+      if (!_canPlayLocally) throw StateError('Local playback superseded');
+
       final duration = shadowPlayer.state.duration;
       var seekTo = resumeAt + const Duration(milliseconds: 300);
       if (duration > Duration.zero && seekTo > duration) seekTo = duration;
 
       await shadowPlayer.seek(seekTo);
+      if (!_canPlayLocally) throw StateError('Local playback superseded');
       await shadowPlayer.play();
 
       final ready = await _positionAdvancesWithinForPlayer(
@@ -178,7 +198,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         baseline: seekTo,
         timeout: const Duration(seconds: 2),
       );
-      if (!ready || !mounted) {
+      if (!ready || !_canPlayLocally) {
         await shadowPlayer.stop();
         await shadowPlayer.dispose();
         return false;
@@ -203,6 +223,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       await shadowPlayer.dispose();
       return false;
     } finally {
+      _shadowPlayer = null;
       _backgroundHandoffInProgress = false;
     }
   }
@@ -213,15 +234,16 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }) async {
     final endAt = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(endAt)) {
-      if (!mounted) return false;
+      if (!_canPlayLocally) return false;
       if (_player.state.position > baseline) return true;
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
-    return _player.state.position > baseline;
+    return _canPlayLocally && _player.state.position > baseline;
   }
 
   Future<bool> _trySoftRecordingResume(Duration resumeAt) async {
     try {
+      if (!_canPlayLocally) return false;
       // First try to continue immediately without reopening the stream.
       await _player.play();
       if (await _positionAdvancesWithin(
@@ -232,6 +254,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       }
 
       // Nudge slightly forward (never backward) to avoid visible rewind.
+      if (!_canPlayLocally) return false;
       final nowPos = _player.state.position;
       final currentDuration = _player.state.duration;
       var nudgeTo = nowPos + const Duration(milliseconds: 300);
@@ -243,6 +266,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       }
 
       await _player.seek(nudgeTo);
+      if (!_canPlayLocally) return false;
       await _player.play();
       return await _positionAdvancesWithin(
         baseline: nowPos,
@@ -276,10 +300,14 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     final reusingPlayer = widget.store.hasPlayer;
     _player = widget.store.ensurePlayer();
     _controller = widget.store.videoController;
+    widget.store.addListener(_onStoreChanged);
     // Only treat the player as active if it is actually playing/buffering —
     // a stopped player (e.g. after navigating away) still needs a fresh open.
     final playerIsActive =
-        reusingPlayer && (_player.state.playing || _player.state.buffering);
+        reusingPlayer &&
+        (_player.state.playing ||
+            _player.state.buffering ||
+            widget.store.restoredPlaybackStreamUrl == widget.streamUrl);
     _loading = !playerIsActive;
 
     _bindPlayerStreams();
@@ -288,7 +316,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     // we're watching an active recording, first try a soft resume (play/seek)
     // and only hard-reopen as a fallback.
     _stalenessTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
-      if (!mounted) return;
+      if (!_canPlayLocally) return;
       final pos = _player.state.position;
       final duration = _player.state.duration;
       final isBuffering = _player.state.buffering;
@@ -352,6 +380,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
           return;
         }
 
+        if (!_canPlayLocally) return;
         await _player.open(
           Media(
             widget.streamUrl,
@@ -365,11 +394,13 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         await _player.stream.duration
             .firstWhere((d) => d > Duration.zero)
             .timeout(const Duration(seconds: 8));
+        if (!_canPlayLocally) return;
         await _player.seek(resumeAt);
+        if (!_canPlayLocally) return;
         await _player.play();
         _softResumeFailures = 0;
       } catch (e) {
-        debugPrint('Recording resume failed: $e');
+        debugPrint('Recording resume failed.');
       } finally {
         if (mounted) _resumingRecording = false;
       }
@@ -393,7 +424,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     final resolveStreamUrl = widget.resolveStreamUrl;
     final originalUrl = widget.streamUrl;
     bool isCurrentOpen() =>
-        mounted &&
+        _canPlayLocally &&
         generation == _openGeneration &&
         widget.store.nowPlaying?.streamUrl == originalUrl;
     if (!isCurrentOpen()) return;
@@ -443,7 +474,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }
 
   void _handleFailure(String message) {
-    if (!mounted) return;
+    if (!_canPlayLocally) return;
     _startupTimer?.cancel();
 
     if (_attempt < _maxRetries) {
@@ -461,6 +492,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   @override
   void dispose() {
     _openGeneration++;
+    widget.store.removeListener(_onStoreChanged);
     WidgetsBinding.instance.removeObserver(this);
     _recordingResumeTimer?.cancel();
     _stalenessTimer?.cancel();
@@ -488,6 +520,9 @@ class _ChannelPlayerState extends State<ChannelPlayer>
             opaque: true,
             pageBuilder: (context, animation, secondaryAnimation) =>
                 _FullscreenChannelView(
+                  canPlayLocally: () =>
+                      !widget.store.localPlaybackSuppressed &&
+                      widget.store.hasPlayer,
                   player: _player,
                   controller: _controller,
                   onNextChannel: widget.onNextChannel,
@@ -552,6 +587,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }
 
   Future<void> _togglePlayPause() async {
+    if (!_canPlayLocally) return;
     if (_player.state.playing) {
       await _player.pause();
       return;
@@ -560,6 +596,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }
 
   Future<void> _seekBy(Duration delta) async {
+    if (!_canPlayLocally) return;
     final current = _player.state.position;
     final duration = _player.state.duration;
     var target = current + delta;
@@ -650,6 +687,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                               onChanged: !hasFiniteDuration
                                   ? null
                                   : (value) {
+                                      if (!_canPlayLocally) return;
                                       _player.seek(
                                         Duration(milliseconds: value.round()),
                                       );
@@ -970,6 +1008,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
 class _FullscreenChannelView extends StatefulWidget {
   const _FullscreenChannelView({
+    required this.canPlayLocally,
     required this.player,
     required this.controller,
     required this.onNextChannel,
@@ -977,6 +1016,7 @@ class _FullscreenChannelView extends StatefulWidget {
   });
 
   final Player player;
+  final bool Function() canPlayLocally;
   final VideoController controller;
   final VoidCallback? onNextChannel;
   final VoidCallback? onPreviousChannel;
@@ -1226,6 +1266,7 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
   }
 
   Future<void> _togglePlayPause() async {
+    if (!widget.canPlayLocally()) return;
     if (widget.player.state.playing) {
       await widget.player.pause();
       return;
@@ -1234,6 +1275,7 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
   }
 
   Future<void> _seekBy(Duration delta) async {
+    if (!widget.canPlayLocally()) return;
     final current = widget.player.state.position;
     final duration = widget.player.state.duration;
     var target = current + delta;
@@ -1543,6 +1585,9 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                                     onChanged: !hasFiniteDuration
                                         ? null
                                         : (value) {
+                                            if (!widget.canPlayLocally()) {
+                                              return;
+                                            }
                                             widget.player.seek(
                                               Duration(
                                                 milliseconds: value.round(),
