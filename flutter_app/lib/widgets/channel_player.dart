@@ -17,6 +17,9 @@ class ChannelPlayer extends StatefulWidget {
   final bool isActiveRecording;
   final VoidCallback? onNextChannel;
   final VoidCallback? onPreviousChannel;
+  final int fullscreenRequest;
+  final VoidCallback? onFullscreenClosed;
+  final bool previewFocusable;
 
   const ChannelPlayer({
     super.key,
@@ -26,6 +29,9 @@ class ChannelPlayer extends StatefulWidget {
     this.isActiveRecording = false,
     this.onNextChannel,
     this.onPreviousChannel,
+    this.fullscreenRequest = 0,
+    this.onFullscreenClosed,
+    this.previewFocusable = true,
   });
 
   @override
@@ -59,6 +65,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   bool _loading = true;
   String? _error;
   bool _inFullscreen = false;
+  late final ValueNotifier<String?> _playbackError;
+  late final ValueNotifier<int> _retryRequest;
   AppLifecycleState? _lifecycleState;
   Duration _lastKnownPosition = Duration.zero;
   DateTime _lastPositionAdvancedAt = DateTime.now();
@@ -98,6 +106,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
       if (playing && !_resolvingStream) {
         _startupTimer?.cancel();
+        _playbackError.value = null;
         setState(() {
           _loading = false;
           _error = null;
@@ -274,6 +283,9 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     // (e.g. rotating across a width breakpoint) while a fullscreen route
     // still holds direct references to them.
     final reusingPlayer = widget.store.hasPlayer;
+    _playbackError = widget.store.playbackError;
+    _retryRequest = widget.store.playbackRetryRequest;
+    _retryRequest.addListener(_retryPlayback);
     _player = widget.store.ensurePlayer();
     _controller = widget.store.videoController;
     // Only treat the player as active if it is actually playing/buffering —
@@ -376,16 +388,42 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     });
 
     if (!playerIsActive) {
-      _openCurrentStream(resetAttempts: true);
+      _scheduleStreamOpen();
     }
+    if (widget.fullscreenRequest > 0) _scheduleFullscreen();
   }
 
   @override
   void didUpdateWidget(covariant ChannelPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.streamUrl != widget.streamUrl) {
-      _openCurrentStream(resetAttempts: true);
+      _scheduleStreamOpen();
     }
+    if (widget.fullscreenRequest > 0 &&
+        oldWidget.fullscreenRequest != widget.fullscreenRequest) {
+      _scheduleFullscreen();
+    }
+  }
+
+  void _scheduleFullscreen() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.fullscreenRequest > 0) _enterFullscreen();
+    });
+  }
+
+  void _scheduleStreamOpen() {
+    final streamUrl = widget.streamUrl;
+    // A fullscreen route can listen to shared feedback while this preview is
+    // being rebuilt. Notify it after layout, outside the current build phase.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.streamUrl == streamUrl) {
+        unawaited(_openCurrentStream(resetAttempts: true));
+      }
+    });
+  }
+
+  void _retryPlayback() {
+    if (mounted) unawaited(_openCurrentStream(resetAttempts: true));
   }
 
   Future<void> _openCurrentStream({required bool resetAttempts}) async {
@@ -398,6 +436,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         widget.store.nowPlaying?.streamUrl == originalUrl;
     if (!isCurrentOpen()) return;
     _resolvingStream = resolveStreamUrl != null;
+    _playbackError.value = null;
     if (resetAttempts) {
       _attempt = 0;
       _lastKnownPosition = Duration.zero;
@@ -456,6 +495,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
       _loading = false;
       _error = message;
     });
+    _playbackError.value = message;
   }
 
   @override
@@ -471,6 +511,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     _completedSub?.cancel();
     _hideControlsNonFullscreenTimer?.cancel();
     _tvFullscreenFocusNode?.dispose();
+    _retryRequest.removeListener(_retryPlayback);
     // _player is owned by PlaylistStore (see initState) and outlives this
     // State, so it must not be disposed here.
     super.dispose();
@@ -481,6 +522,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
     setState(() => _inFullscreen = true);
     unawaited(_setNativeFullscreen(true));
+    final retryRequest = _retryRequest;
 
     Navigator.of(context, rootNavigator: true)
         .push(
@@ -490,6 +532,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                 _FullscreenChannelView(
                   player: _player,
                   controller: _controller,
+                  playbackError: _playbackError,
+                  onRetry: () => retryRequest.value++,
                   onNextChannel: widget.onNextChannel,
                   onPreviousChannel: widget.onPreviousChannel,
                 ),
@@ -501,6 +545,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         .whenComplete(() {
           if (mounted) {
             setState(() => _inFullscreen = false);
+            widget.onFullscreenClosed?.call();
           }
           unawaited(_setNativeFullscreen(false));
         });
@@ -872,7 +917,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                       child: _buildControlBar(),
                     ),
                   ),
-                if (isTv)
+                if (isTv && widget.previewFocusable)
                   Positioned(
                     right: 12,
                     bottom: 12,
@@ -972,12 +1017,16 @@ class _FullscreenChannelView extends StatefulWidget {
   const _FullscreenChannelView({
     required this.player,
     required this.controller,
+    required this.playbackError,
+    required this.onRetry,
     required this.onNextChannel,
     required this.onPreviousChannel,
   });
 
   final Player player;
   final VideoController controller;
+  final ValueNotifier<String?> playbackError;
+  final VoidCallback onRetry;
   final VoidCallback? onNextChannel;
   final VoidCallback? onPreviousChannel;
 
@@ -989,6 +1038,7 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
     with WidgetsBindingObserver {
   double _lastNonZeroVolume = 100.0;
   bool _controlsVisible = true;
+  bool _tvConfigured = false;
   Timer? _hideControlsTimer;
   FocusNode? _tvFocusNode;
   FocusNode? _tvPreviousChannelFocusNode;
@@ -1214,6 +1264,27 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
     _resetHideControlsTimer();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_tvConfigured) {
+      _tvConfigured = true;
+      if (isAndroidTv(context)) {
+        _hideControlsTimer?.cancel();
+        _controlsVisible = false;
+      }
+    }
+  }
+
+  void _hideTvControls() {
+    _hideControlsTimer?.cancel();
+    setState(() {
+      _controlsVisible = false;
+      _tvControlsMode = false;
+    });
+    _tvFocusNode?.requestFocus();
+  }
+
   String _formatDuration(Duration value) {
     final totalSeconds = value.inSeconds;
     final hours = totalSeconds ~/ 3600;
@@ -1358,6 +1429,41 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                   child: _buildFullscreenControlBar(isTv: isTv),
                 ),
               ),
+              Positioned.fill(
+                child: ValueListenableBuilder<String?>(
+                  valueListenable: widget.playbackError,
+                  builder: (context, error, _) => error == null
+                      ? const SizedBox.shrink()
+                      : ColoredBox(
+                          color: Colors.black87,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  error,
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(height: 20),
+                                FilledButton(
+                                  autofocus: true,
+                                  onPressed: widget.onRetry,
+                                  child: const Text('Retry'),
+                                ),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'BACK to channels',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                ),
+              ),
             ],
           ),
         ),
@@ -1368,112 +1474,143 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
 
     // On Android TV: wrap in a focusable widget so D-pad keys are delivered
     // here instead of to child widgets (Slider, buttons).
-    return Focus(
-      focusNode: _tvFocusNode,
-      autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-          return KeyEventResult.ignored;
-        }
-        final controlFocused = _hasFocusedFullscreenControl();
-        if ((event.logicalKey == LogicalKeyboardKey.arrowDown ||
-                event.logicalKey == LogicalKeyboardKey.arrowUp) &&
-            !_tvControlsMode &&
-            !controlFocused) {
-          _showControls();
-          _tvControlsMode = true;
-          _focusPlayPauseControl();
-          return KeyEventResult.handled;
-        }
-        if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
-            (_tvControlsMode || controlFocused)) {
-          _showControls();
-          if (_isSideChannelFocusActive()) {
+    return PopScope(
+      canPop: !_controlsVisible,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _hideTvControls();
+      },
+      child: Focus(
+        focusNode: _tvFocusNode,
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+            return KeyEventResult.ignored;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.goBack ||
+              event.logicalKey == LogicalKeyboardKey.escape) {
+            if (event is KeyDownEvent) {
+              if (_controlsVisible) {
+                _hideTvControls();
+              } else {
+                Navigator.of(context).pop();
+              }
+            }
+            return KeyEventResult.handled;
+          }
+          if (widget.playbackError.value != null) {
+            // The error screen is its own remote layer. Do not send focus to
+            // the playback controls hidden beneath the Retry button.
+            if (event is KeyDownEvent &&
+                (event.logicalKey == LogicalKeyboardKey.select ||
+                    event.logicalKey == LogicalKeyboardKey.enter ||
+                    event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+                    event.logicalKey == LogicalKeyboardKey.gameButtonA ||
+                    event.logicalKey == LogicalKeyboardKey.space)) {
+              widget.onRetry();
+            }
+            return KeyEventResult.handled;
+          }
+          final controlFocused = _hasFocusedFullscreenControl();
+          if ((event.logicalKey == LogicalKeyboardKey.arrowDown ||
+                  event.logicalKey == LogicalKeyboardKey.arrowUp) &&
+              !_tvControlsMode &&
+              !controlFocused) {
+            _showControls();
+            _tvControlsMode = true;
+            _focusPlayPauseControl();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+              (_tvControlsMode || controlFocused)) {
+            _showControls();
+            if (_isSideChannelFocusActive()) {
+              _focusTimelineControl();
+              return KeyEventResult.handled;
+            }
+            if (_isTimelineFocusActive()) {
+              _focusPlayPauseControl();
+              return KeyEventResult.handled;
+            }
+            if (!_isBottomControlFocusActive()) {
+              _focusPlayPauseControl();
+              return KeyEventResult.handled;
+            }
+            _focusPlayPauseControl();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
+              (_tvControlsMode || controlFocused)) {
+            _showControls();
+            if (_isSideChannelFocusActive()) {
+              _tvControlsMode = false;
+              _tvFocusNode?.requestFocus();
+              return KeyEventResult.handled;
+            }
+            if (_isTimelineFocusActive()) {
+              final movedToSide = _focusPreferredSideChannelControl();
+              if (!movedToSide) {
+                _tvControlsMode = false;
+                _tvFocusNode?.requestFocus();
+              }
+              return KeyEventResult.handled;
+            }
             _focusTimelineControl();
             return KeyEventResult.handled;
           }
-          if (_isTimelineFocusActive()) {
-            _focusPlayPauseControl();
-            return KeyEventResult.handled;
-          }
-          if (!_isBottomControlFocusActive()) {
-            _focusPlayPauseControl();
-            return KeyEventResult.handled;
-          }
-          _focusPlayPauseControl();
-          return KeyEventResult.handled;
-        }
-        if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
-            (_tvControlsMode || controlFocused)) {
-          _showControls();
-          if (_isSideChannelFocusActive()) {
-            _tvControlsMode = false;
-            _tvFocusNode?.requestFocus();
-            return KeyEventResult.handled;
-          }
-          if (_isTimelineFocusActive()) {
-            final movedToSide = _focusPreferredSideChannelControl();
-            if (!movedToSide) {
-              _tvControlsMode = false;
-              _tvFocusNode?.requestFocus();
+          if (_tvControlsMode || controlFocused) {
+            _showControls();
+            if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+              if (_isSideChannelFocusActive()) {
+                _moveSideChannelFocus(forward: false);
+                return KeyEventResult.handled;
+              }
+              if (_isTimelineFocusActive()) {
+                _seekBy(const Duration(seconds: -10));
+                return KeyEventResult.handled;
+              }
+              _moveBottomControlFocus(forward: false);
+              return KeyEventResult.handled;
             }
-            return KeyEventResult.handled;
+            if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+              if (_isSideChannelFocusActive()) {
+                _moveSideChannelFocus(forward: true);
+                return KeyEventResult.handled;
+              }
+              if (_isTimelineFocusActive()) {
+                _seekBy(const Duration(seconds: 10));
+                return KeyEventResult.handled;
+              }
+              _moveBottomControlFocus(forward: true);
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
           }
-          _focusTimelineControl();
-          return KeyEventResult.handled;
-        }
-        if (_tvControlsMode || controlFocused) {
-          _showControls();
           if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-            if (_isSideChannelFocusActive()) {
-              _moveSideChannelFocus(forward: false);
-              return KeyEventResult.handled;
-            }
-            if (_isTimelineFocusActive()) {
-              _seekBy(const Duration(seconds: -10));
-              return KeyEventResult.handled;
-            }
-            _moveBottomControlFocus(forward: false);
+            _seekBy(const Duration(seconds: -10));
+            _showControls();
             return KeyEventResult.handled;
           }
           if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            if (_isSideChannelFocusActive()) {
-              _moveSideChannelFocus(forward: true);
-              return KeyEventResult.handled;
-            }
-            if (_isTimelineFocusActive()) {
-              _seekBy(const Duration(seconds: 10));
-              return KeyEventResult.handled;
-            }
-            _moveBottomControlFocus(forward: true);
+            _seekBy(const Duration(seconds: 10));
+            _showControls();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.select ||
+              event.logicalKey == LogicalKeyboardKey.enter) {
+            _showControls();
+            _tvControlsMode = true;
+            _focusPlayPauseControl();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+              event.logicalKey == LogicalKeyboardKey.arrowDown) {
+            _showControls();
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
-        }
-        if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-          _seekBy(const Duration(seconds: -10));
-          _showControls();
-          return KeyEventResult.handled;
-        }
-        if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-          _seekBy(const Duration(seconds: 10));
-          _showControls();
-          return KeyEventResult.handled;
-        }
-        if (event.logicalKey == LogicalKeyboardKey.select ||
-            event.logicalKey == LogicalKeyboardKey.enter) {
-          _togglePlayPause();
-          _showControls();
-          return KeyEventResult.handled;
-        }
-        if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
-            event.logicalKey == LogicalKeyboardKey.arrowDown) {
-          _showControls();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: scaffold,
+        },
+        child: scaffold,
+      ),
     );
   }
 
