@@ -4,8 +4,8 @@ import '../../../models/models.dart';
 import '../../../services/api_client.dart';
 import '../../../services/playlist_store.dart';
 
-/// Bottom-sheet action menu opened by long-pressing a channel or group tile
-/// on Android TV. Each row is a large, D-pad-focusable button.
+/// Channel details opened from the row menu or by long-selecting on Android TV.
+/// Each action is a large, D-pad-focusable button.
 class ChannelActionSheet extends StatelessWidget {
   final Channel channel;
   final PlaylistStore store;
@@ -26,6 +26,8 @@ class ChannelActionSheet extends StatelessWidget {
     return _ActionSheetBody(
       title: channel.name,
       titleStyle: theme.textTheme.titleLarge,
+      titleMaxLines: null,
+      subtitle: channel.groupName,
       children: [
         _ActionButton(
           icon: Icons.play_arrow,
@@ -47,14 +49,13 @@ class ChannelActionSheet extends StatelessWidget {
           iconColor: isFav ? Colors.amber : null,
           label: isFav ? 'Remove from favorites' : 'Add to favorites',
           onPressed: () async {
+            final messenger = ScaffoldMessenger.of(context);
             Navigator.of(context).pop();
             try {
               await store.toggleFavorite(channel);
             } on ApiException catch (e) {
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(e.message)));
+              if (!messenger.mounted) return;
+              messenger.showSnackBar(SnackBar(content: Text(e.message)));
             }
           },
         ),
@@ -133,12 +134,16 @@ class GroupActionSheet extends StatelessWidget {
 class _ActionSheetBody extends StatelessWidget {
   final String title;
   final TextStyle? titleStyle;
+  final int? titleMaxLines;
+  final String? subtitle;
   final List<Widget> children;
 
   const _ActionSheetBody({
     required this.title,
     required this.titleStyle,
     required this.children,
+    this.titleMaxLines = 2,
+    this.subtitle,
   });
 
   @override
@@ -155,10 +160,18 @@ class _ActionSheetBody extends StatelessWidget {
               child: Text(
                 title,
                 style: titleStyle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                maxLines: titleMaxLines,
+                overflow: titleMaxLines == null ? null : TextOverflow.ellipsis,
               ),
             ),
+            if (subtitle != null && subtitle!.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+                child: Text(
+                  subtitle!,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
             ...children,
           ],
         ),

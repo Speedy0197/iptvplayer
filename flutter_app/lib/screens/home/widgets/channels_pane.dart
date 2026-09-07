@@ -1,14 +1,15 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../config/device_utils.dart';
 import '../../../models/models.dart';
-import '../../../services/api_client.dart';
 import '../../../services/playlist_store.dart';
 import '../../../widgets/tv_focusable_tile.dart';
 import 'channel_action_sheet.dart';
 import 'channel_logo_avatar.dart';
 
-// Standard Material two-line ListTile height (leading + title + subtitle).
+// Uniform rows leave room for two title lines without changing list density.
 const double _kChannelTileHeight = 72.0;
 
 class ChannelsPane extends StatefulWidget {
@@ -35,6 +36,7 @@ class _ChannelsPaneState extends State<ChannelsPane> {
   final ScrollController _scrollController = ScrollController();
   int? _lastNowPlayingId;
   bool _pendingScrollToNowPlaying = false;
+  double _channelTileHeight = _kChannelTileHeight;
 
   @override
   void dispose() {
@@ -60,7 +62,7 @@ class _ChannelsPaneState extends State<ChannelsPane> {
     final maxExtent = _scrollController.position.maxScrollExtent;
     // maxScrollExtent is exact because ListView uses itemExtent.
     if (maxExtent <= 0) return; // list fits in viewport, item already visible
-    final targetOffset = (index * _kChannelTileHeight).clamp(0.0, maxExtent);
+    final targetOffset = (index * _channelTileHeight).clamp(0.0, maxExtent);
     _scrollController.animateTo(
       targetOffset,
       duration: const Duration(milliseconds: 300),
@@ -72,6 +74,24 @@ class _ChannelsPaneState extends State<ChannelsPane> {
   Widget build(BuildContext context) {
     final channels = widget.store.channels;
     final isTv = isAndroidTv(context);
+    final titleStyle = Theme.of(
+      context,
+    ).textTheme.bodyLarge!.copyWith(height: 1.4);
+    final titleMetrics = TextPainter(
+      text: TextSpan(text: 'Ag', style: titleStyle),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    );
+    // Scale every row together for accessibility, preserving scroll-to-index.
+    _channelTileHeight = math.max(
+      _kChannelTileHeight,
+      titleMetrics.preferredLineHeight * 2 + (isTv ? 24 : 16),
+    );
+    titleMetrics.dispose();
+    final groupName = widget.store.selectedGroup?.trim();
+    final heading = groupName != null && groupName.isNotEmpty
+        ? groupName
+        : widget.store.selectedPlaylist?.name ?? '';
     final nowPlayingId = widget.store.nowPlaying?.id;
 
     // Detect nowPlaying change. This runs when the pane is actually visible
@@ -83,7 +103,9 @@ class _ChannelsPaneState extends State<ChannelsPane> {
     }
 
     if (_pendingScrollToNowPlaying) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToNowPlaying());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToNowPlaying(),
+      );
     }
 
     Widget buildList({required bool shrinkWrap}) {
@@ -98,13 +120,15 @@ class _ChannelsPaneState extends State<ChannelsPane> {
         shrinkWrap: shrinkWrap,
         // itemExtent makes maxScrollExtent exact from the first frame —
         // no lazy estimation needed, so scroll-to-index is always accurate.
-        itemExtent: _kChannelTileHeight,
+        itemExtent: _channelTileHeight,
         itemCount: channels.length,
         itemBuilder: (context, i) => _ChannelTile(
           channel: channels[i],
           store: widget.store,
           onChannelSelected: widget.onChannelSelected,
           isTv: isTv,
+          titleStyle: titleStyle,
+          tileHeight: _channelTileHeight,
           autofocus: isTv && i == 0,
           focusNode: i == 0 ? widget.initialChannelFocusNode : null,
         ),
@@ -120,7 +144,16 @@ class _ChannelsPaneState extends State<ChannelsPane> {
               : MainAxisSize.max,
           children: [
             ListTile(
-              title: const Text('Channels'),
+              title: heading.isEmpty
+                  ? null
+                  : Tooltip(
+                      message: heading,
+                      child: Text(
+                        heading,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
               dense: true,
               trailing: IconButton(
                 icon: Icon(
@@ -128,7 +161,8 @@ class _ChannelsPaneState extends State<ChannelsPane> {
                       ? Icons.sort_by_alpha
                       : Icons.sort,
                 ),
-                tooltip: widget.store.channelSortOrder == ChannelSortOrder.byName
+                tooltip:
+                    widget.store.channelSortOrder == ChannelSortOrder.byName
                     ? 'Sort by name (tap to sort by index)'
                     : 'Sort by index (tap to sort by name)',
                 onPressed: () => widget.store.toggleChannelSortOrder(),
@@ -137,7 +171,10 @@ class _ChannelsPaneState extends State<ChannelsPane> {
             if (!widget.compact || widget.fullscreen)
               Expanded(child: buildList(shrinkWrap: false))
             else
-              SizedBox(height: 360, child: buildList(shrinkWrap: widget.compact)),
+              SizedBox(
+                height: 360,
+                child: buildList(shrinkWrap: widget.compact),
+              ),
           ],
         ),
       ),
@@ -150,6 +187,8 @@ class _ChannelTile extends StatelessWidget {
   final PlaylistStore store;
   final Future<void> Function()? onChannelSelected;
   final bool isTv;
+  final TextStyle titleStyle;
+  final double tileHeight;
   final bool autofocus;
   final FocusNode? focusNode;
 
@@ -158,6 +197,8 @@ class _ChannelTile extends StatelessWidget {
     required this.store,
     required this.onChannelSelected,
     required this.isTv,
+    required this.titleStyle,
+    required this.tileHeight,
     required this.autofocus,
     required this.focusNode,
   });
@@ -176,56 +217,61 @@ class _ChannelTile extends StatelessWidget {
     final selected = store.nowPlaying?.id == c.id;
     final showDesktopTooltips = isMacOrWindowsDesktop();
 
-    Widget trailing = IconButton(
-      onPressed: () async {
-        try {
-          await store.toggleFavorite(c);
-        } on ApiException catch (e) {
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(e.message)));
-        }
-      },
-      icon: Icon(
-        c.isFavorite ? Icons.star : Icons.star_border,
-        color: c.isFavorite ? Colors.amber : null,
-      ),
+    void showDetails() => showChannelActionSheet(
+      context,
+      channel: c,
+      store: store,
+      onPlay: () => _play(context),
     );
 
-    // On TV we drop the trailing IconButton from D-pad traversal — favoriting
-    // happens via the long-press action sheet instead. Keep the star itself
-    // as a visual indicator so users can see at a glance which channels are
-    // already favorited.
+    Widget trailing = IconButton(
+      tooltip: 'Channel details',
+      onPressed: showDetails,
+      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+      icon: const Icon(Icons.more_horiz),
+    );
+
+    // Keep touch details available on large tablets too. On TV, long-select
+    // opens the same sheet without adding a second D-pad stop to each row.
     if (isTv) {
-      trailing = ExcludeFocus(
-        child: Icon(
-          c.isFavorite ? Icons.star : Icons.star_border,
-          color: c.isFavorite ? Colors.amber : null,
-        ),
-      );
+      trailing = ExcludeFocus(child: trailing);
     }
 
     final tile = ListTile(
       selected: selected,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      leading: ChannelLogoAvatar(logoUrl: c.logoUrl),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+      // ListTile otherwise centers against its default 56px height even when
+      // itemExtent gives it more space. Account for the TV focus shell too.
+      minTileHeight: tileHeight - (isTv ? 8 : 0),
+      minLeadingWidth: 32,
+      horizontalTitleGap: 10,
+      minVerticalPadding: 0,
+      titleAlignment: ListTileTitleAlignment.center,
+      titleTextStyle: titleStyle,
+      leading: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          ChannelLogoAvatar(logoUrl: c.logoUrl, radius: 16),
+          if (c.isFavorite)
+            PositionedDirectional(
+              end: -3,
+              bottom: -3,
+              child: const Icon(
+                Icons.star,
+                size: 14,
+                color: Colors.amber,
+                semanticLabel: 'Favorite',
+              ),
+            ),
+        ],
+      ),
       title: showDesktopTooltips
           ? Tooltip(
               message: c.name,
-              child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              child: Text(c.name, maxLines: 2, overflow: TextOverflow.ellipsis),
             )
-          : Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: showDesktopTooltips
-          ? Tooltip(
-              message: c.groupName,
-              child: Text(
-                c.groupName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            )
-          : Text(c.groupName, maxLines: 1, overflow: TextOverflow.ellipsis),
+          : Text(c.name, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: trailing,
       onTap: isTv ? null : () => _play(context),
     );
@@ -238,12 +284,7 @@ class _ChannelTile extends StatelessWidget {
       focusNode: focusNode,
       autofocus: autofocus,
       onTap: () => _play(context),
-      onLongPress: () => showChannelActionSheet(
-        context,
-        channel: c,
-        store: store,
-        onPlay: () => _play(context),
-      ),
+      onLongPress: showDetails,
       child: tile,
     );
   }
