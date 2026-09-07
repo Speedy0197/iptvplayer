@@ -474,7 +474,7 @@ private final class CastRequestWaiter: NSObject, GCKRequestDelegate {
 
     func requestDidComplete(_ request: GCKRequest) { complete(success: true) }
     func request(_ request: GCKRequest, didFailWithError error: GCKError) { fail() }
-    func request(_ request: GCKRequest, didAbortWithReason abortReason: GCKRequestAbortReason) { fail() }
+    func request(_ request: GCKRequest, didAbortWith abortReason: GCKRequestAbortReason) { fail() }
     func fail() { complete(success: false) }
 
     private func complete(success: Bool) {
