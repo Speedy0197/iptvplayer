@@ -13,6 +13,7 @@ import '../models/models.dart';
 import 'api_client.dart';
 import 'channel_sort.dart';
 import 'playlist_search.dart';
+import 'xmltv_guide.dart';
 
 export 'channel_sort.dart' show ChannelSortOrder;
 export 'playlist_search.dart' show SearchResultItem, SearchResultType;
@@ -214,8 +215,9 @@ class PlaylistStore extends ChangeNotifier {
   final Map<int, Future<List<Channel>>> _playlistChannelsInFlight = {};
   final Map<int, String> _runtimeEpgUrlByPlaylist = {};
 
-  // XMLTV cache: url -> (fetchedAt, rawXml)
-  final Map<String, ({DateTime fetchedAt, String xml})> _xmltvCache = {};
+  // XMLTV loads share both the download and background parse.
+  final Map<String, ({DateTime fetchedAt, XmltvGuide guide})> _xmltvCache = {};
+  final Map<String, Future<XmltvGuide>> _xmltvInFlight = {};
   static const Duration _xmltvCacheTtl = Duration(hours: 6);
 
   // VU+ EPG cache: serviceRef -> (fetchedAt, entries)
@@ -854,43 +856,27 @@ class PlaylistStore extends ChangeNotifier {
     }
   }
 
-  DateTime? _parseXmltvDate(String value) {
-    final raw = value.trim();
-    if (raw.isEmpty) return null;
-    final m = RegExp(r'^(\d{14})(?:\s+([+-]\d{4}))?').firstMatch(raw);
-    if (m == null) return null;
-
-    final digits = m.group(1)!;
-    final year = int.parse(digits.substring(0, 4));
-    final month = int.parse(digits.substring(4, 6));
-    final day = int.parse(digits.substring(6, 8));
-    final hour = int.parse(digits.substring(8, 10));
-    final minute = int.parse(digits.substring(10, 12));
-    final second = int.parse(digits.substring(12, 14));
-
-    final utc = DateTime.utc(year, month, day, hour, minute, second);
-    final offset = m.group(2);
-    if (offset == null) {
-      return utc.toLocal();
+  Future<XmltvGuide> _loadXmltvGuide(String epgUrl) async {
+    final cached = _xmltvCache[epgUrl];
+    if (cached != null &&
+        DateTime.now().difference(cached.fetchedAt) < _xmltvCacheTtl) {
+      return cached.guide;
     }
+    final existing = _xmltvInFlight[epgUrl];
+    if (existing != null) return existing;
 
-    final sign = offset.startsWith('-') ? -1 : 1;
-    final offHours = int.parse(offset.substring(1, 3));
-    final offMinutes = int.parse(offset.substring(3, 5));
-    final totalMinutes = sign * (offHours * 60 + offMinutes);
-    return utc.subtract(Duration(minutes: totalMinutes)).toLocal();
-  }
-
-  String _normalizeEpgMatchText(String value) {
-    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-  }
-
-  bool _roughEpgNameMatch(String left, String right) {
-    if (left.isEmpty || right.isEmpty) return false;
-    if (left == right) return true;
-    if (left.length >= 5 && right.contains(left)) return true;
-    if (right.length >= 5 && left.contains(right)) return true;
-    return false;
+    final future = () async {
+      final xml = await _readTextFromUrlOrFile(epgUrl);
+      final guide = await compute(parseXmltvGuide, xml);
+      _xmltvCache[epgUrl] = (fetchedAt: DateTime.now(), guide: guide);
+      return guide;
+    }();
+    _xmltvInFlight[epgUrl] = future;
+    try {
+      return await future;
+    } finally {
+      _xmltvInFlight.remove(epgUrl);
+    }
   }
 
   Future<List<EpgEntry>> _loadXmltvEpgForChannel(
@@ -900,102 +886,10 @@ class PlaylistStore extends ChangeNotifier {
     final configured = (playlist.epgUrl ?? '').trim();
     final discovered = (_runtimeEpgUrlByPlaylist[playlist.id] ?? '').trim();
     final epgUrl = configured.isNotEmpty ? configured : discovered;
-    if (epgUrl.isEmpty) {
-      return const [];
-    }
+    if (epgUrl.isEmpty) return const [];
 
-    final cached = _xmltvCache[epgUrl];
-    final String xmlRaw;
-    if (cached != null &&
-        DateTime.now().difference(cached.fetchedAt) < _xmltvCacheTtl) {
-      xmlRaw = cached.xml;
-    } else {
-      xmlRaw = await _readTextFromUrlOrFile(epgUrl);
-      _xmltvCache[epgUrl] = (fetchedAt: DateTime.now(), xml: xmlRaw);
-    }
-    final doc = XmlDocument.parse(xmlRaw);
-
-    final candidateChannelIds = <String>{};
-    final targetId = channel.epgChannelId.trim().toLowerCase();
-    final normalizedChannelName = _normalizeEpgMatchText(channel.name);
-
-    if (targetId.isNotEmpty) {
-      candidateChannelIds.add(targetId);
-    }
-
-    // Only do name-based fallback when there is no explicit epgChannelId,
-    // to avoid false positives from loose substring matching.
-    if (targetId.isEmpty && normalizedChannelName.isNotEmpty) {
-      final allXmlChannels = doc.findAllElements('channel').toList();
-      for (final xmlChannel in allXmlChannels) {
-        final xmlId = (xmlChannel.getAttribute('id') ?? '')
-            .trim()
-            .toLowerCase();
-        if (xmlId.isEmpty) continue;
-
-        final normalizedXmlId = _normalizeEpgMatchText(xmlId);
-        if (_roughEpgNameMatch(normalizedChannelName, normalizedXmlId)) {
-          candidateChannelIds.add(xmlId);
-          continue;
-        }
-
-        final displayNames = xmlChannel
-            .findElements('display-name')
-            .map((e) => _normalizeEpgMatchText(e.innerText.trim()))
-            .where((v) => v.isNotEmpty)
-            .toList();
-        final hasDisplayMatch = displayNames.any(
-          (v) => _roughEpgNameMatch(normalizedChannelName, v),
-        );
-        if (hasDisplayMatch) {
-          candidateChannelIds.add(xmlId);
-        }
-      }
-    }
-
-    if (candidateChannelIds.isEmpty) {
-      return const [];
-    }
-
-    final allProgrammes = doc.findAllElements('programme').toList();
-    final entries = <EpgEntry>[];
-    for (final programme in allProgrammes) {
-      final channelIdAttr = (programme.getAttribute('channel') ?? '')
-          .trim()
-          .toLowerCase();
-      if (!candidateChannelIds.contains(channelIdAttr)) continue;
-
-      final start = _parseXmltvDate(programme.getAttribute('start') ?? '');
-      final end = _parseXmltvDate(programme.getAttribute('stop') ?? '');
-      if (start == null || end == null || !end.isAfter(start)) continue;
-
-      final title = programme.findElements('title').isEmpty
-          ? ''
-          : programme.findElements('title').first.innerText.trim();
-      final desc = programme.findElements('desc').isEmpty
-          ? ''
-          : programme.findElements('desc').first.innerText.trim();
-
-      entries.add(
-        EpgEntry(
-          channelEpgId: channel.epgChannelId.isNotEmpty
-              ? channel.epgChannelId
-              : channelIdAttr,
-          startTime: start,
-          endTime: end,
-          title: title,
-          description: desc,
-        ),
-      );
-    }
-
-    entries.sort((a, b) => a.startTime.compareTo(b.startTime));
-
-    // Deduplicate entries with the same start time (feed may list same slot multiple times)
-    final seen = <DateTime>{};
-    final deduped = entries.where((e) => seen.add(e.startTime)).toList();
-
-    return deduped;
+    final guide = await _loadXmltvGuide(epgUrl);
+    return guide.entriesFor(channel);
   }
 
   List<EpgEntry> _parseVuplusEpg(String xmlRaw, String fallbackServiceRef) {

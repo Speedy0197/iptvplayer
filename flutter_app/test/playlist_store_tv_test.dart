@@ -8,6 +8,92 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('TV browsing store support', () {
+    test('concurrent channel lookups share one XMLTV download', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final requested = Completer<void>();
+      final release = Completer<void>();
+      var downloads = 0;
+      server.listen((request) async {
+        downloads++;
+        if (!requested.isCompleted) requested.complete();
+        await release.future;
+        request.response.write(_xmltv('news.one', 'Daily news'));
+        await request.response.close();
+      });
+      final store = PlaylistStore(
+        api: _fixtureApi(
+          playlists: [
+            _playlistJson(
+              1,
+              epgUrl: 'http://${server.address.address}:${server.port}/epg.xml',
+            ),
+          ],
+          channelsByPlaylist: {
+            1: [
+              _channelJson(11, 1, 'News', epgId: 'news.one'),
+              _channelJson(12, 1, 'Sports', epgId: 'sports.one'),
+            ],
+          },
+        ),
+      );
+      addTearDown(store.dispose);
+      await store.fetchPlaylists();
+      final news = store.channels.first;
+      final sports = store.channels.last;
+      final first = store.loadChannelEpg(news);
+      await requested.future;
+      final others = List.generate(
+        20,
+        (i) => store.loadChannelEpg(i.isEven ? news : sports),
+      );
+      release.complete();
+      final results = await Future.wait([first, ...others]);
+
+      expect(results.first.single.title, 'Daily news');
+      expect(results[2], isEmpty);
+      expect(downloads, 1);
+      await store.loadChannelEpg(news);
+      expect(downloads, 1);
+    });
+
+    test('a malformed XMLTV response can be retried', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      var downloads = 0;
+      server.listen((request) async {
+        downloads++;
+        request.response.write(
+          downloads == 1 ? '<tv><programme>' : _xmltv('news.one', 'Daily news'),
+        );
+        await request.response.close();
+      });
+      final store = PlaylistStore(
+        api: _fixtureApi(
+          playlists: [
+            _playlistJson(
+              1,
+              epgUrl: 'http://${server.address.address}:${server.port}/epg.xml',
+            ),
+          ],
+          channelsByPlaylist: {
+            1: [_channelJson(11, 1, 'News', epgId: 'news.one')],
+          },
+        ),
+      );
+      addTearDown(store.dispose);
+      await store.fetchPlaylists();
+      await expectLater(
+        store.loadChannelEpg(store.channels.single),
+        throwsA(anything),
+      );
+
+      final result = await store.loadChannelEpg(store.channels.single);
+
+      expect(result.single.title, 'Daily news');
+      expect(downloads, 2);
+    });
+
     test('playlist selection preserves playback only when requested', () async {
       final epgFile = await _writeEpgFixture();
       addTearDown(() => epgFile.parent.delete(recursive: true));

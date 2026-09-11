@@ -25,14 +25,25 @@ class ChannelLogoAvatar extends StatelessWidget {
       return fallback;
     }
 
+    // Bound decoded memory to the on-screen size, including high-DPI displays.
+    // Fit both dimensions so wide/tall provider logos retain their aspect ratio.
+    final decodeSize = (radius * 2 * MediaQuery.devicePixelRatioOf(context))
+        .ceil()
+        .clamp(1, 4096);
+
     return ClipOval(
       child: SizedBox(
         width: radius * 2,
         height: radius * 2,
         child: Padding(
           padding: const EdgeInsets.all(2),
-          child: Image.network(
-            effectiveLogoUrl,
+          child: Image(
+            image: ResizeImage(
+              NetworkImage(effectiveLogoUrl),
+              width: decodeSize,
+              height: decodeSize,
+              policy: ResizeImagePolicy.fit,
+            ),
             fit: BoxFit.contain,
             alignment: Alignment.center,
             errorBuilder: (context, error, stackTrace) => fallback,
