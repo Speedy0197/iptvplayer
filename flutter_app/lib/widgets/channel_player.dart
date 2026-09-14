@@ -59,6 +59,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _completedSub;
   Timer? _startupTimer;
+  Timer? _audioErrorTimer;
   Timer? _recordingResumeTimer;
   Timer? _stalenessTimer;
 
@@ -87,6 +88,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   };
 
   void _bindPlayerStreams() {
+    _cancelAudioErrorCheck();
     _playingSub?.cancel();
     _bufferingSub?.cancel();
     _errorSub?.cancel();
@@ -133,11 +135,51 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         debugPrint('Ignoring non-fatal audio output error: $message');
         return;
       }
+      if (!_canPlayLocally) return;
+      // media_kit forwards mpv's packet decode errors as stream errors even
+      // when the decoder can recover. Give ongoing playback time to advance
+      // before restarting it. Decoder initialization failures still fail fast.
+      if (message.trim() == 'Error decoding audio.' &&
+          !_resolvingStream &&
+          _player.state.playing &&
+          _player.state.position > Duration.zero) {
+        _checkAudioError(message);
+        return;
+      }
       _handleFailure('Playback error: $message');
     });
 
     _completedSub = _player.stream.completed.listen((_) {
       // Unused — staleness poller handles the active-recording case.
+    });
+  }
+
+  void _cancelAudioErrorCheck() {
+    _audioErrorTimer?.cancel();
+    _audioErrorTimer = null;
+  }
+
+  void _checkAudioError(String message) {
+    // Coalesce a burst without extending the deadline indefinitely.
+    if (_audioErrorTimer != null) return;
+    final player = _player;
+    final generation = _openGeneration;
+    final baseline = player.state.position;
+    _audioErrorTimer = Timer(const Duration(seconds: 3), () {
+      _audioErrorTimer = null;
+      if (!_canPlayLocally ||
+          generation != _openGeneration ||
+          player != _player) {
+        return;
+      }
+      if (player.state.playing &&
+          player.state.position > baseline &&
+          !player.state.buffering &&
+          !player.state.completed) {
+        debugPrint('Recovered from audio packet decoding error.');
+        return;
+      }
+      _handleFailure('Playback error: $message');
     });
   }
 
@@ -439,6 +481,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }
 
   Future<void> _openCurrentStream({required bool resetAttempts}) async {
+    _cancelAudioErrorCheck();
     final generation = ++_openGeneration;
     final resolveStreamUrl = widget.resolveStreamUrl;
     final originalUrl = widget.streamUrl;
@@ -494,6 +537,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   }
 
   void _handleFailure(String message) {
+    _cancelAudioErrorCheck();
     if (!_canPlayLocally) return;
     _startupTimer?.cancel();
 
@@ -512,6 +556,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
   @override
   void dispose() {
+    _cancelAudioErrorCheck();
     _openGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     _recordingResumeTimer?.cancel();

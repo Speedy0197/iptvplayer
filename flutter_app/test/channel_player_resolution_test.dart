@@ -15,6 +15,8 @@ class TestPlayer extends PlatformPlayer {
   TestPlayer() : super(configuration: const PlayerConfiguration());
 
   final opened = <String>[];
+  void emitError(String message) => errorController.add(message);
+
   int plays = 0;
   int seeks = 0;
   Completer<void>? pendingOpen;
@@ -66,6 +68,82 @@ Channel channel(String url) => Channel(
 );
 
 void main() {
+  for (final scenario in [
+    'continues',
+    'stalls',
+    'stops after advancing',
+    'switches',
+    'fatal error',
+  ]) {
+    testWidgets('audio decode error while playback $scenario', (tester) async {
+      final output = TestPlayer();
+      output.state = output.state.copyWith(
+        playing: true,
+        position: const Duration(seconds: 30),
+      );
+      final player = Player(platformPlayer: output);
+      final controller = TestVideoController(player);
+      final store = PlaylistStore(
+        api: ApiClient(baseUrl: 'http://backend.test/api/v1'),
+      );
+      store.replacePlayer(player, controller);
+      store.nowPlaying = channel('http://receiver.test:8001/first');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChannelPlayer(
+              store: store,
+              streamUrl: store.nowPlaying!.streamUrl,
+            ),
+          ),
+        ),
+      );
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        store.dispose();
+        controller.notifier.dispose();
+        await tester.idle();
+      });
+
+      // Bad packets must not exhaust retries or cover working playback.
+      for (var i = 0; i < 4; i++) {
+        output.emitError('Error decoding audio.');
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+      expect(output.opened, isEmpty);
+      expect(store.playbackError.value, isNull);
+      expect(find.text('Retry'), findsNothing);
+
+      if (scenario == 'continues') {
+        output.state = output.state.copyWith(
+          position: const Duration(seconds: 33),
+        );
+      } else if (scenario == 'stops after advancing') {
+        output.state = output.state.copyWith(
+          playing: false,
+          position: const Duration(seconds: 31),
+        );
+      } else if (scenario == 'switches') {
+        store.nowPlaying = channel('http://receiver.test:8001/second');
+      } else if (scenario == 'fatal error') {
+        output.emitError('Could not open codec.');
+        await tester.pump();
+        expect(output.opened, hasLength(1));
+      }
+      await tester.pump(const Duration(seconds: 4));
+      expect(
+        output.opened,
+        scenario == 'stalls' ||
+                scenario == 'stops after advancing' ||
+                scenario == 'fatal error'
+            ? ['http://receiver.test:8001/first']
+            : isEmpty,
+      );
+      expect(store.playbackError.value, isNull);
+      expect(find.text('Retry'), findsNothing);
+    });
+  }
+
   for (final action in ['keep playing', 'stop', 'switch before rebuild']) {
     testWidgets('pending resolution respects $action', (tester) async {
       final output = TestPlayer();
