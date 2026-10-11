@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../config/device_utils.dart';
+import '../services/playback_buffer.dart';
 import '../services/playlist_store.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -41,7 +42,8 @@ class ChannelPlayer extends StatefulWidget {
 class _ChannelPlayerState extends State<ChannelPlayer>
     with WidgetsBindingObserver {
   static const int _maxRetries = 2;
-  static const Duration _startupTimeout = Duration(seconds: 12);
+  static const Duration _startupTimeout = Duration(seconds: 30);
+  static const Duration _bufferingRecoveryTimeout = Duration(seconds: 30);
   static const Duration _recordingStaleThreshold = Duration(seconds: 6);
   static const int _maxSoftResumeFailuresBeforeReopen = 2;
   static const Duration _preemptiveEdgeThreshold = Duration(seconds: 6);
@@ -58,6 +60,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   StreamSubscription<bool>? _bufferingSub;
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _completedSub;
+  StreamSubscription<Duration>? _audioErrorProgressSub;
   Timer? _startupTimer;
   Timer? _audioErrorTimer;
   Timer? _recordingResumeTimer;
@@ -113,14 +116,14 @@ class _ChannelPlayerState extends State<ChannelPlayer>
         _startupTimer?.cancel();
         _playbackError.value = null;
         setState(() {
-          _loading = false;
+          _loading = _player.state.buffering;
           _error = null;
         });
       }
     });
 
     _bufferingSub = _player.stream.buffering.listen((buffering) {
-      if (!mounted) return;
+      if (!_canPlayLocally) return;
       setState(() {
         _loading = _resolvingStream || buffering;
       });
@@ -157,6 +160,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
   void _cancelAudioErrorCheck() {
     _audioErrorTimer?.cancel();
     _audioErrorTimer = null;
+    _audioErrorProgressSub?.cancel();
+    _audioErrorProgressSub = null;
   }
 
   void _checkAudioError(String message) {
@@ -165,22 +170,47 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     final player = _player;
     final generation = _openGeneration;
     final baseline = player.state.position;
-    _audioErrorTimer = Timer(const Duration(seconds: 3), () {
-      _audioErrorTimer = null;
+    void checkRecovery({required bool allowBuffering}) {
+      _cancelAudioErrorCheck();
       if (!_canPlayLocally ||
           generation != _openGeneration ||
           player != _player) {
         return;
       }
-      if (player.state.playing &&
-          player.state.position > baseline &&
-          !player.state.buffering &&
-          !player.state.completed) {
+      // Refilling the network cache deliberately stops position progress.
+      // Give it a bounded grace period instead of throwing that cache away.
+      if (allowBuffering && player.state.buffering && !player.state.completed) {
+        _audioErrorProgressSub = player.stream.position.listen((position) {
+          if (_canPlayLocally &&
+              generation == _openGeneration &&
+              player == _player &&
+              position > baseline &&
+              !player.state.completed) {
+            // Retire this error as soon as decoding advances, so a later
+            // pause or independent refill cannot revive a stale retry.
+            _cancelAudioErrorCheck();
+          }
+        });
+        _audioErrorTimer = Timer(
+          _bufferingRecoveryTimeout,
+          () => checkRecovery(allowBuffering: false),
+        );
+        return;
+      }
+      if (player.state.position > baseline &&
+          !player.state.completed &&
+          (!allowBuffering ||
+              (player.state.playing && !player.state.buffering))) {
         debugPrint('Recovered from audio packet decoding error.');
         return;
       }
       _handleFailure('Playback error: $message');
-    });
+    }
+
+    _audioErrorTimer = Timer(
+      const Duration(seconds: 3),
+      () => checkRecovery(allowBuffering: true),
+    );
   }
 
   Future<bool> _positionAdvancesWithinForPlayer({
@@ -211,6 +241,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     final shadowController = VideoController(shadowPlayer);
 
     try {
+      await configureNetworkBuffering(shadowPlayer);
+      if (!_canPlayLocally) throw StateError('Local playback superseded');
       await shadowPlayer.open(
         Media(widget.streamUrl, httpHeaders: _streamHeaders),
         play: false,
@@ -343,7 +375,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
     // a stopped player (e.g. after navigating away) still needs a fresh open.
     final playerIsActive =
         reusingPlayer && (_player.state.playing || _player.state.buffering);
-    _loading = !playerIsActive;
+    _loading = !playerIsActive || _player.state.buffering;
 
     _bindPlayerStreams();
 
@@ -528,6 +560,8 @@ class _ChannelPlayerState extends State<ChannelPlayer>
           : await resolveStreamUrl();
       if (!isCurrentOpen()) return;
       _resolvingStream = false;
+      await configureNetworkBuffering(_player);
+      if (!isCurrentOpen()) return;
       await _player.open(Media(url, httpHeaders: _streamHeaders), play: true);
     } catch (_) {
       if (!isCurrentOpen()) return;
@@ -1415,12 +1449,32 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
                         widget.player.state.position > Duration.zero;
                     return Center(
                       child: hasStartedPlayback
-                          ? Video(
-                              controller: widget.controller,
-                              controls: NoVideoControls,
-                              fit: BoxFit.contain,
-                              pauseUponEnteringBackgroundMode: !Platform.isIOS,
-                              resumeUponEnteringForegroundMode: true,
+                          ? Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Video(
+                                  controller: widget.controller,
+                                  controls: NoVideoControls,
+                                  fit: BoxFit.contain,
+                                  pauseUponEnteringBackgroundMode:
+                                      !Platform.isIOS,
+                                  resumeUponEnteringForegroundMode: true,
+                                ),
+                                StreamBuilder<bool>(
+                                  stream: widget.player.stream.buffering,
+                                  initialData: widget.player.state.buffering,
+                                  builder: (context, snapshot) =>
+                                      snapshot.data == true
+                                      ? const Center(
+                                          child: SizedBox(
+                                            width: 40,
+                                            height: 40,
+                                            child: CircularProgressIndicator(),
+                                          ),
+                                        )
+                                      : const SizedBox.shrink(),
+                                ),
+                              ],
                             )
                           : const SizedBox(
                               width: 40,

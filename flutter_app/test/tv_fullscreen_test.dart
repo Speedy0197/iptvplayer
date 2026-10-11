@@ -91,6 +91,25 @@ void main() {
   );
 
   testWidgets(
+    'fullscreen shows a buffer refill after playback has started',
+    (tester) async {
+      engine.recover();
+      await mount(tester);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      engine.buffer(true);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      engine.buffer(false);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
     'fullscreen Retry works after the preview is recreated',
     (tester) async {
       engine.failOpen = true;
@@ -119,7 +138,16 @@ class _TestPlayer extends PlatformPlayer {
   _TestPlayer() : super(configuration: const PlayerConfiguration());
   bool failOpen = false;
   int opens = 0;
-  void recover() => playingController.add(true);
+  void recover() {
+    state = state.copyWith(playing: true);
+    playingController.add(true);
+  }
+
+  void buffer(bool buffering) {
+    state = state.copyWith(buffering: buffering);
+    bufferingController.add(buffering);
+  }
+
   @override
   Future<void> open(Playable playable, {bool play = true}) async {
     opens++;

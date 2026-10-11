@@ -16,6 +16,20 @@ class TestPlayer extends PlatformPlayer {
 
   final opened = <String>[];
   void emitError(String message) => errorController.add(message);
+  void emitBuffering(bool buffering) {
+    state = state.copyWith(buffering: buffering);
+    bufferingController.add(buffering);
+  }
+
+  void emitPlaying(bool playing) {
+    state = state.copyWith(playing: playing);
+    playingController.add(playing);
+  }
+
+  void emitPosition(Duration position) {
+    state = state.copyWith(position: position);
+    positionController.add(position);
+  }
 
   int plays = 0;
   int seeks = 0;
@@ -68,6 +82,137 @@ Channel channel(String url) => Channel(
 );
 
 void main() {
+  group('network buffering', () {
+    late TestPlayer output;
+    late PlaylistStore store;
+
+    Future<void> mount(
+      WidgetTester tester, {
+      bool alreadyPlaying = true,
+      bool alreadyBuffering = false,
+    }) async {
+      output = TestPlayer();
+      output.state = output.state.copyWith(
+        playing: alreadyPlaying,
+        buffering: alreadyBuffering,
+        position: alreadyPlaying ? const Duration(seconds: 30) : Duration.zero,
+      );
+      final player = Player(platformPlayer: output);
+      final controller = TestVideoController(player);
+      store = PlaylistStore(
+        api: ApiClient(baseUrl: 'http://backend.test/api/v1'),
+      )..nowPlaying = channel('http://receiver.test:8001/first');
+      store.replacePlayer(player, controller);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChannelPlayer(
+              store: store,
+              streamUrl: store.nowPlaying!.streamUrl,
+            ),
+          ),
+        ),
+      );
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        store.dispose();
+        controller.notifier.dispose();
+        await tester.idle();
+      });
+    }
+
+    testWidgets('opens immediately and allows a slow startup to finish', (
+      tester,
+    ) async {
+      await mount(tester, alreadyPlaying: false);
+      expect(output.opened, ['http://receiver.test:8001/first']);
+      await tester.pump(const Duration(seconds: 20));
+      expect(output.opened, hasLength(1));
+
+      output.emitPlaying(true);
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.pump(const Duration(seconds: 30));
+      expect(output.opened, hasLength(1));
+    });
+
+    testWidgets('a startup that never finishes still exhausts retries', (
+      tester,
+    ) async {
+      await mount(tester, alreadyPlaying: false);
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(seconds: 31));
+      }
+      expect(output.opened, hasLength(3));
+      expect(find.text('Retry'), findsOneWidget);
+    });
+
+    testWidgets('playing events do not hide an ongoing buffer refill', (
+      tester,
+    ) async {
+      await mount(tester);
+      output.emitBuffering(true);
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      output.emitPlaying(true);
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      output.emitBuffering(false);
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('a recreated preview reflects the existing buffer refill', (
+      tester,
+    ) async {
+      await mount(tester, alreadyBuffering: true);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(output.opened, isEmpty);
+    });
+
+    for (final action in [
+      'recovers',
+      'recovers then pauses',
+      'recovers then buffers again',
+      'stays stalled',
+      'switches channel',
+    ]) {
+      testWidgets('audio packet error during buffer refill $action', (
+        tester,
+      ) async {
+        await mount(tester);
+        output.emitError('Error decoding audio.');
+        output.emitBuffering(true);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 4));
+        expect(output.opened, isEmpty);
+        expect(store.playbackError.value, isNull);
+
+        if (action.startsWith('recovers')) {
+          output.emitBuffering(false);
+          output.emitPosition(const Duration(seconds: 31));
+          await tester.pump();
+          if (action == 'recovers then pauses') {
+            output.emitPlaying(false);
+          } else if (action == 'recovers then buffers again') {
+            output.emitBuffering(true);
+          }
+          await tester.pump();
+        } else if (action == 'switches channel') {
+          store.nowPlaying = channel('http://receiver.test:8001/second');
+        }
+        await tester.pump(const Duration(seconds: 31));
+        expect(
+          output.opened,
+          action == 'stays stalled'
+              ? ['http://receiver.test:8001/first']
+              : isEmpty,
+        );
+        expect(store.playbackError.value, isNull);
+      });
+    }
+  });
+
   for (final scenario in [
     'continues',
     'stalls',
