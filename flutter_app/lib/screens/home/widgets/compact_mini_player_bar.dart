@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../../config/device_utils.dart';
 import '../../../models/models.dart';
+import '../../../services/playlist_store.dart';
 import '../../../widgets/adaptive_single_line_text.dart';
 import 'channel_logo_avatar.dart';
 
 class CompactMiniPlayerBar extends StatelessWidget {
+  final PlaylistStore? store;
   final Channel channel;
   final bool iosCompact;
   final VoidCallback onTap;
@@ -13,6 +15,7 @@ class CompactMiniPlayerBar extends StatelessWidget {
 
   const CompactMiniPlayerBar({
     super.key,
+    this.store,
     required this.channel,
     required this.iosCompact,
     required this.onTap,
@@ -21,6 +24,61 @@ class CompactMiniPlayerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final source = store;
+    if (source == null || !source.hasPlayer) {
+      return _buildBar(context, status: 'Connecting… · Open player');
+    }
+    final player = source.player;
+    return ValueListenableBuilder<String?>(
+      valueListenable: source.playbackError,
+      builder: (context, error, _) => StreamBuilder<bool>(
+        stream: player.stream.playing,
+        initialData: player.state.playing,
+        builder: (context, playing) => StreamBuilder<bool>(
+          stream: player.stream.buffering,
+          initialData: player.state.buffering,
+          builder: (context, buffering) {
+            final isPlaying = playing.data ?? false;
+            final status = error != null
+                ? 'Unavailable'
+                : buffering.data == true
+                ? (player.state.position == Duration.zero && !isPlaying
+                      ? 'Connecting…'
+                      : 'Buffering…')
+                : isPlaying
+                ? 'Playing'
+                : player.state.position == Duration.zero
+                ? 'Connecting…'
+                : 'Paused';
+            return _buildBar(
+              context,
+              status: '$status · Open player',
+              playing: isPlaying,
+              toggle: error != null
+                  ? null
+                  : () {
+                      if (source.nowPlaying?.streamUrl != channel.streamUrl) {
+                        return;
+                      }
+                      if (player.state.playing) {
+                        player.pause();
+                      } else {
+                        player.play();
+                      }
+                    },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBar(
+    BuildContext context, {
+    required String status,
+    bool playing = false,
+    VoidCallback? toggle,
+  }) {
     final isPhone = isIosOrAndroidPhone(context);
     final showDesktopTooltips = isMacOrWindowsDesktop();
 
@@ -77,9 +135,9 @@ class CompactMiniPlayerBar extends StatelessWidget {
                                         )),
                             showDesktopTooltips
                                 ? Tooltip(
-                                    message: channel.groupName,
+                                    message: status,
                                     child: Text(
-                                      channel.groupName,
+                                      status,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: Theme.of(
@@ -89,14 +147,14 @@ class CompactMiniPlayerBar extends StatelessWidget {
                                   )
                                 : (isPhone
                                       ? AdaptiveSingleLineText(
-                                          text: channel.groupName,
+                                          text: status,
                                           minFontSize: 10,
                                           style: Theme.of(
                                             context,
                                           ).textTheme.bodySmall,
                                         )
                                       : Text(
-                                          channel.groupName,
+                                          status,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: Theme.of(
@@ -110,6 +168,11 @@ class CompactMiniPlayerBar extends StatelessWidget {
                     ],
                   ),
                 ),
+              ),
+              IconButton(
+                tooltip: playing ? 'Pause' : 'Play',
+                onPressed: toggle,
+                icon: Icon(playing ? Icons.pause : Icons.play_arrow),
               ),
               IconButton(
                 tooltip: 'Stop playback',

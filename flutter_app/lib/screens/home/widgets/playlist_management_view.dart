@@ -42,81 +42,169 @@ class _PlaylistManagementViewState extends State<PlaylistManagementView> {
     return size.width >= 960 || size.height >= 960;
   }
 
+  Map<int, String> get _feedback => widget.store.playlistRefreshFeedback;
+  final Set<int> _refreshing = {};
+
+  Future<void> _refresh(Playlist source) async {
+    setState(() {
+      _refreshing.add(source.id);
+      _feedback[source.id] = 'Updating source…';
+    });
+    try {
+      await widget.onRefresh(source);
+      _feedback[source.id] = 'Source updated';
+      if (mounted) setState(() {});
+    } catch (_) {
+      _feedback[source.id] = 'Update failed. Try again.';
+      if (mounted) setState(() {});
+    } finally {
+      if (mounted) setState(() => _refreshing.remove(source.id));
+    }
+  }
+
+  String _updated(Playlist source) {
+    final date = DateTime.tryParse(source.lastRefreshed ?? '')?.toLocal();
+    if (date == null) return 'Not updated yet';
+    return 'Last updated ${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} '
+        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isAndroidTv = _isAndroidTv(context);
-
+    final isTv = _isAndroidTv(context);
     return Card(
       child: Column(
         children: [
-          ListTile(
-            title: const Text('Manage Playlists'),
-            subtitle: Text(
-              isAndroidTv
-                  ? 'Refresh playlist sources'
-                  : 'Add, edit, refresh or delete playlist sources',
-            ),
-            trailing: isAndroidTv
-                ? null
-                : FilledButton.icon(
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Sources',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Connect a provider, playlist or home receiver.',
+                      ),
+                    ],
+                  ),
+                ),
+                if (!isTv)
+                  IconButton.filled(
+                    tooltip: 'Add source',
                     onPressed: widget.onCreate,
                     icon: const Icon(Icons.add),
-                    label: const Text('Add'),
                   ),
+              ],
+            ),
           ),
           const Divider(height: 1),
           Expanded(
             child: widget.store.playlists.isEmpty
-                ? const Center(child: Text('No playlists yet'))
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.dns_outlined, size: 40),
+                          const SizedBox(height: 12),
+                          const Text('Add your first source'),
+                          if (!isTv)
+                            TextButton(
+                              onPressed: widget.onCreate,
+                              child: const Text('Add source'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  )
                 : ListView.separated(
+                    key: const PageStorageKey('sources-list'),
                     padding: const EdgeInsets.all(12),
                     itemCount: widget.store.playlists.length,
-                    separatorBuilder: (_, index) => const SizedBox(height: 8),
+                    separatorBuilder: (_, i) => const SizedBox(height: 8),
                     itemBuilder: (context, i) {
                       final p = widget.store.playlists[i];
-                      final isRefreshing = widget.store.isRefreshingPlaylist(
-                        p.id,
-                      );
-                      final isFirstItem = i == 0;
+                      final busy =
+                          _refreshing.contains(p.id) ||
+                          widget.store.isRefreshingPlaylist(p.id);
                       return Card(
-                        child: ListTile(
-                          title: Text(p.name),
-                          subtitle: Text(p.type.toUpperCase()),
-                          trailing: Wrap(
-                            spacing: 4,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (!isAndroidTv)
-                                IconButton(
-                                  onPressed: isRefreshing
-                                      ? null
-                                      : () => widget.onEdit(p),
-                                  icon: const Icon(Icons.edit_outlined),
-                                ),
-                              IconButton(
-                                autofocus: isFirstItem && isAndroidTv,
-                                onPressed: isRefreshing
-                                    ? null
-                                    : () => widget.onRefresh(p),
-                                tooltip: isRefreshing
-                                    ? 'Updating playlist...'
-                                    : 'Reload playlist',
-                                icon: isRefreshing
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.refresh),
+                              Text(
+                                p.name,
+                                style: Theme.of(context).textTheme.titleMedium,
                               ),
-                              if (!isAndroidTv)
-                                IconButton(
-                                  onPressed: isRefreshing
-                                      ? null
-                                      : () => widget.onDelete(p),
-                                  icon: const Icon(Icons.delete_outline),
+                              const SizedBox(height: 4),
+                              Text('${p.type.toUpperCase()} · ${_updated(p)}'),
+                              if (busy)
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 12),
+                                  child: LinearProgressIndicator(),
                                 ),
+                              if (_feedback[p.id] != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Semantics(
+                                    liveRegion: true,
+                                    child: Text(_feedback[p.id]!),
+                                  ),
+                                ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children:
+                                    [
+                                          OutlinedButton.icon(
+                                            autofocus: isTv && i == 0,
+                                            onPressed: busy
+                                                ? null
+                                                : () => _refresh(p),
+                                            icon: const Icon(Icons.refresh),
+                                            label: const Text('Refresh'),
+                                          ),
+                                          if (!isTv) ...[
+                                            IconButton(
+                                              tooltip: 'Edit source',
+                                              onPressed: busy
+                                                  ? null
+                                                  : () => widget.onEdit(p),
+                                              icon: const Icon(
+                                                Icons.edit_outlined,
+                                              ),
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Delete source',
+                                              onPressed: busy
+                                                  ? null
+                                                  : () => widget.onDelete(p),
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                              ),
+                                            ),
+                                          ],
+                                        ]
+                                        .map(
+                                          (action) => action is OutlinedButton
+                                              ? Tooltip(
+                                                  message: 'Refresh source',
+                                                  child: action,
+                                                )
+                                              : action,
+                                        )
+                                        .toList(),
+                              ),
                             ],
                           ),
                         ),

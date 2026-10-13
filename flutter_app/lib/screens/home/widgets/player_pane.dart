@@ -1,3 +1,4 @@
+import 'programme_presentation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../config/device_utils.dart';
@@ -10,8 +11,9 @@ import '../../../widgets/tv_focusable_tile.dart';
 
 class PlayerPane extends StatelessWidget {
   final PlaylistStore store;
+  final GlobalKey? playerKey;
 
-  const PlayerPane({super.key, required this.store});
+  const PlayerPane({super.key, required this.store, this.playerKey});
 
   String _fmtTime(DateTime t) {
     final hh = t.hour.toString().padLeft(2, '0');
@@ -53,22 +55,38 @@ class PlayerPane extends StatelessWidget {
     await store.play(channels[nextIndex]);
   }
 
-  Widget _buildEpgEntryCard(BuildContext context, EpgEntry entry, bool isTv) {
+  Widget _buildEpgEntryCard(
+    BuildContext context,
+    EpgEntry entry,
+    bool isTv, {
+    String? label,
+    required DateTime now,
+  }) {
+    final playlistId = store.nowPlaying?.playlistId;
     final timeRange =
         '${_fmtTime(entry.startTime)} - ${_fmtTime(entry.endTime)}';
     final description = _descriptionPreview(entry.description);
 
     return _EpgEntryCard(
+      label: label,
+      progress: isProgrammeOnNow(entry, now)
+          ? programmeProgress(entry, now)
+          : null,
+      remaining: isProgrammeOnNow(entry, now)
+          ? programmeRemaining(entry, now)
+          : null,
       storageKey: '${entry.channelEpgId}_${entry.startTime.toIso8601String()}',
       title: entry.title,
       timeRange: timeRange,
       description: description,
-      canRecord: store.isSelectedPlaylistVuplus,
+      canRecord: store.playlists.any(
+        (p) => p.id == playlistId && p.type == 'vuplus',
+      ),
       hasEnded: entry.endTime.isBefore(DateTime.now()),
       isTimerScheduled: store.isTimerScheduled(entry),
       isTv: isTv,
-      onRecord: () => store.recordEpgEntry(entry),
-      onRemoveTimer: () => store.removeEpgTimer(entry),
+      onRecord: () => store.recordEpgEntry(entry, playlistId: playlistId),
+      onRemoveTimer: () => store.removeEpgTimer(entry, playlistId: playlistId),
     );
   }
 
@@ -145,15 +163,13 @@ class PlayerPane extends StatelessWidget {
 
     final now = DateTime.now();
     final allEpg = store.epgEntries;
-    final nowIndex = allEpg.indexWhere(
-      (e) => e.startTime.isBefore(now) && e.endTime.isAfter(now),
-    );
+    final nowIndex = allEpg.indexWhere((e) => isProgrammeOnNow(e, now));
     final startIndex = nowIndex >= 0
         ? nowIndex
         : allEpg.indexWhere((e) => e.startTime.isAfter(now));
     final epgToShow = startIndex >= 0
         ? allEpg.skip(startIndex).take(epgLimit).toList()
-        : allEpg.take(epgLimit).toList();
+        : <EpgEntry>[];
     final epgContent = store.loadingEpg
         ? const Center(child: CircularProgressIndicator())
         : store.epgSourceMissing
@@ -164,7 +180,17 @@ class PlayerPane extends StatelessWidget {
             itemCount: epgToShow.length,
             itemBuilder: (context, i) {
               final entry = epgToShow[i];
-              return _buildEpgEntryCard(context, entry, isTv);
+              return _buildEpgEntryCard(
+                context,
+                entry,
+                isTv,
+                now: now,
+                label: isProgrammeOnNow(entry, now)
+                    ? 'On now'
+                    : i == (nowIndex >= 0 ? 1 : 0)
+                    ? 'Up next'
+                    : null,
+              );
             },
           );
 
@@ -205,6 +231,7 @@ class PlayerPane extends StatelessWidget {
                               width: maxPlayerWidth,
                               height: playerHeight,
                               child: ChannelPlayer(
+                                key: playerKey,
                                 store: store,
                                 streamUrl: channel.streamUrl,
                                 resolveStreamUrl: () =>
@@ -227,7 +254,7 @@ class PlayerPane extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'EPG',
+                              'Programme guide',
                               style: TextStyle(fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 8),
@@ -246,6 +273,7 @@ class PlayerPane extends StatelessWidget {
                           width: maxPlayerWidth,
                           height: playerHeight,
                           child: ChannelPlayer(
+                            key: playerKey,
                             store: store,
                             streamUrl: channel.streamUrl,
                             resolveStreamUrl: () =>
@@ -263,7 +291,7 @@ class PlayerPane extends StatelessWidget {
                       buildChannelGroupText(),
                       const SizedBox(height: 16),
                       const Text(
-                        'EPG',
+                        'Programme guide',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
@@ -278,6 +306,9 @@ class PlayerPane extends StatelessWidget {
 }
 
 class _EpgEntryCard extends StatefulWidget {
+  final String? label;
+  final double? progress;
+  final String? remaining;
   final String storageKey;
   final String title;
   final String timeRange;
@@ -290,6 +321,9 @@ class _EpgEntryCard extends StatefulWidget {
   final Future<void> Function() onRemoveTimer;
 
   const _EpgEntryCard({
+    this.label,
+    this.progress,
+    this.remaining,
     required this.storageKey,
     required this.title,
     required this.timeRange,
@@ -319,6 +353,10 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
 
   Future<void> _removeTimer() async {
     if (_removingTimer) return;
+    if (!await confirmRecordingCancellation(context, widget.title) ||
+        !mounted) {
+      return;
+    }
     setState(() {
       _removingTimer = true;
     });
@@ -332,7 +370,7 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Could not remove timer: $e')),
+        const SnackBar(content: Text('Could not cancel recording. Try again.')),
       );
     } finally {
       if (mounted) {
@@ -358,7 +396,9 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Could not add timer: $e')),
+        const SnackBar(
+          content: Text('Could not schedule recording. Try again.'),
+        ),
       );
     } finally {
       if (mounted) {
@@ -382,25 +422,16 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
 
   Widget _buildRecordAction(BuildContext context) {
     if (widget.isTimerScheduled) {
-      return Tooltip(
-        message: 'Recording scheduled',
-        child: _removingTimer
+      return IconButton(
+        tooltip: 'Cancel recording',
+        onPressed: _removingTimer ? null : _removeTimer,
+        icon: _removingTimer
             ? const SizedBox(
                 width: 20,
                 height: 20,
-                child: Padding(
-                  padding: EdgeInsets.all(2),
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
+                child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : InkWell(
-                onTap: _removeTimer,
-                child: Icon(
-                  Icons.check_circle,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-              ),
+            : const Icon(Icons.cancel_outlined, size: 20),
       );
     }
 
@@ -508,13 +539,36 @@ class _EpgEntryCardState extends State<_EpgEntryCard> {
             );
           },
         ),
-        subtitle: _expanded
-            ? null
-            : Text(
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.label != null)
+              Text(
+                widget.label!,
+                style: TextStyle(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            if (widget.progress != null) ...[
+              const SizedBox(height: 6),
+              LinearProgressIndicator(
+                value: widget.progress,
+                semanticsLabel: 'Programme progress',
+              ),
+              const SizedBox(height: 4),
+              Text(widget.remaining!),
+            ],
+            if (widget.isTimerScheduled)
+              const Text('Recording scheduled on receiver'),
+            if (!_expanded)
+              Text(
                 widget.description,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
+          ],
+        ),
         children: [
           Align(
             alignment: Alignment.centerLeft,

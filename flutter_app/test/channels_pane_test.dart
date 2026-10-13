@@ -97,6 +97,66 @@ void main() {
     store.dispose();
   });
 
+  testWidgets('quick favorite saves without playback or navigation', (
+    tester,
+  ) async {
+    var navigations = 0;
+    await _pumpPane(
+      tester,
+      store,
+      onChannelSelected: () async {
+        navigations++;
+      },
+    );
+    await tester.tap(find.byTooltip('Add to favorites').first);
+    await tester.pumpAndSettle();
+    expect(store.channels.first.isFavorite, isTrue);
+    expect(store.nowPlaying, isNull);
+    expect(navigations, 0);
+  });
+
+  testWidgets('returning to a channel list restores its browsing offset', (
+    tester,
+  ) async {
+    store.channels = List.generate(50, (i) => _channel(i, 'Channel $i'));
+    store.nowPlaying = store.channels.first;
+    late StateSetter update;
+    var visible = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return visible
+                  ? ChannelsPane(
+                      key: const PageStorageKey('channels'),
+                      store: store,
+                      compact: true,
+                      fullscreen: true,
+                    )
+                  : const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final list = find.byType(ListView);
+    await tester.drag(list, const Offset(0, -700));
+    await tester.pumpAndSettle();
+    final before = tester.widget<ListView>(list).controller!.offset;
+    expect(before, greaterThan(500));
+    update(() => visible = false);
+    await tester.pumpAndSettle();
+    update(() => visible = true);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<ListView>(find.byType(ListView)).controller!.offset,
+      closeTo(before, 1),
+    );
+  });
+
   testWidgets('mixed names share a row height and use both title lines', (
     tester,
   ) async {

@@ -54,6 +54,7 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
   String? m3uFileName;
   String? error;
   String? vuplusDiscoveryStatus;
+  final Map<TextEditingController, String> _fieldErrors = {};
   bool submitting = false;
   bool discoveringVuplus = false;
 
@@ -114,9 +115,8 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(
-                tempController.text,
-              ),
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(tempController.text),
               child: const Text('Save'),
             ),
           ],
@@ -144,7 +144,16 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
     if (!directionalNavigation) {
       return TextField(
         controller: controller,
-        decoration: InputDecoration(labelText: label, hintText: hintText),
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hintText,
+          errorText: _fieldErrors[controller],
+        ),
+        onChanged: (_) {
+          if (_fieldErrors.containsKey(controller)) {
+            setState(() => _fieldErrors.remove(controller));
+          }
+        },
         obscureText: obscureText,
         keyboardType: keyboardType,
         textInputAction: textInputAction,
@@ -210,9 +219,7 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                     children: [
                       Expanded(
                         child: Text(
-                          widget.editing == null
-                              ? 'Add playlist'
-                              : 'Edit playlist',
+                          widget.editing == null ? 'Add source' : 'Edit source',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
@@ -226,23 +233,37 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  SegmentedButton<String>(
-                    showSelectedIcon: false,
-                    segments: const [
-                      ButtonSegment(value: 'xtream', label: Text('Xtream')),
-                      ButtonSegment(value: 'vuplus', label: Text('VU+')),
-                      ButtonSegment(value: 'm3u', label: Text('M3U')),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final option in const {
+                        'xtream': 'Xtream',
+                        'vuplus': 'VU+',
+                        'm3u': 'M3U',
+                      }.entries)
+                        ChoiceChip(
+                          label: Text(option.value),
+                          selected: selectedType == option.key,
+                          onSelected: widget.editing != null
+                              ? null
+                              : (_) => setState(() {
+                                  selectedType = option.key;
+                                  error = null;
+                                  _fieldErrors.clear();
+                                }),
+                        ),
                     ],
-                    selected: {selectedType},
-                    onSelectionChanged: widget.editing != null
-                        ? null
-                        : (next) {
-                            setState(() {
-                              selectedType = next.first;
-                              error = null;
-                            });
-                          },
                   ),
+                  const SizedBox(height: 8),
+                  Text(switch (selectedType) {
+                    'xtream' =>
+                      'Xtream uses the server address, username and password supplied by your IPTV provider.',
+                    'm3u' =>
+                      'M3U connects a playlist URL or a file containing your channels.',
+                    _ =>
+                      'VU+ connects an Enigma2 receiver on your home network. Keep this device on the same network.',
+                  }),
                   const SizedBox(height: 12),
                   _buildEditableField(
                     directionalNavigation: directionalNavigation,
@@ -256,22 +277,24 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        SegmentedButton<String>(
-                          showSelectedIcon: false,
-                          segments: const [
-                            ButtonSegment(value: 'url', label: Text('URL')),
-                            ButtonSegment(
-                              value: 'file',
-                              label: Text('File Upload'),
-                            ),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final option in const {
+                              'url': 'URL',
+                              'file': 'File upload',
+                            }.entries)
+                              ChoiceChip(
+                                label: Text(option.value),
+                                selected: m3uSource == option.key,
+                                onSelected: (_) => setState(() {
+                                  m3uSource = option.key;
+                                  error = null;
+                                  _fieldErrors.clear();
+                                }),
+                              ),
                           ],
-                          selected: {m3uSource},
-                          onSelectionChanged: (next) {
-                            setState(() {
-                              m3uSource = next.first;
-                              error = null;
-                            });
-                          },
                         ),
                         const SizedBox(height: 12),
                         if (m3uSource == 'url')
@@ -420,13 +443,22 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                   ],
                   if (selectedType != 'vuplus') ...[
                     const SizedBox(height: 8),
-                    _buildEditableField(
-                      directionalNavigation: directionalNavigation,
-                      controller: epgUrlCtrl,
-                      label: 'EPG XMLTV URL (optional)',
-                      icon: Icons.tv_outlined,
-                      hintText: 'https://example.com/epg.xml',
-                      keyboardType: TextInputType.url,
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: const Text('Programme guide (optional)'),
+                      subtitle: const Text(
+                        'Add an XMLTV guide if your source needs one.',
+                      ),
+                      children: [
+                        _buildEditableField(
+                          directionalNavigation: directionalNavigation,
+                          controller: epgUrlCtrl,
+                          label: 'EPG XMLTV URL (optional)',
+                          icon: Icons.tv_outlined,
+                          hintText: 'https://example.com/epg.xml',
+                          keyboardType: TextInputType.url,
+                        ),
+                      ],
                     ),
                   ],
                   if (error != null)
@@ -438,7 +470,8 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                       ),
                     ),
                   const SizedBox(height: 8),
-                  Row(
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       TextButton(
                         onPressed: submitting
@@ -446,8 +479,9 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
                             : () => Navigator.of(context).pop(),
                         child: const Text('Cancel'),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
                         child: FilledButton(
                           onPressed: submitting ? null : _submit,
                           child: Row(
@@ -488,6 +522,48 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
   }
 
   Future<void> _submit() async {
+    _fieldErrors.clear();
+    void requiredField(TextEditingController controller, String message) {
+      if (controller.text.trim().isEmpty) _fieldErrors[controller] = message;
+    }
+
+    void urlField(TextEditingController controller, String message) {
+      final uri = Uri.tryParse(controller.text.trim());
+      if (controller.text.trim().isNotEmpty &&
+          (uri == null ||
+              !['http', 'https'].contains(uri.scheme) ||
+              uri.host.isEmpty)) {
+        _fieldErrors[controller] = message;
+      }
+    }
+
+    requiredField(nameCtrl, 'Name is required');
+    if (selectedType == 'xtream') {
+      requiredField(xtreamServerCtrl, 'Server URL is required');
+      urlField(xtreamServerCtrl, 'Enter a valid http or https server URL');
+      requiredField(xtreamUserCtrl, 'Username is required');
+      if (widget.editing == null) {
+        requiredField(xtreamPassCtrl, 'Password is required');
+      }
+    } else if (selectedType == 'm3u' && m3uSource == 'url') {
+      requiredField(m3uUrlCtrl, 'M3U URL is required');
+      urlField(m3uUrlCtrl, 'Enter a valid http or https playlist URL');
+    } else if (selectedType == 'vuplus') {
+      requiredField(vuplusIpCtrl, 'Receiver IP or host is required');
+      final port = int.tryParse(
+        vuplusPortCtrl.text.trim().isEmpty ? '80' : vuplusPortCtrl.text.trim(),
+      );
+      if (port == null || port < 1 || port > 65535) {
+        _fieldErrors[vuplusPortCtrl] = 'Enter a port between 1 and 65535';
+      }
+    }
+    if (selectedType != 'vuplus') {
+      urlField(epgUrlCtrl, 'Enter a valid http or https guide URL');
+    }
+    if (_fieldErrors.isNotEmpty) {
+      setState(() {});
+      return;
+    }
     setState(() {
       submitting = true;
       error = null;
@@ -559,13 +635,16 @@ class _PlaylistDialogState extends State<_PlaylistDialog> {
       if (!mounted) return;
       Navigator.of(
         context,
-      ).pop(widget.editing == null ? 'Playlist created' : 'Playlist updated');
-    } on ApiException catch (e) {
+      ).pop(widget.editing == null ? 'Source created' : 'Source updated');
+    } on ApiException {
       if (!mounted) return;
-      setState(() => error = e.message);
+      setState(
+        () => error =
+            'Could not save this source. Check its address and credentials, then try again.',
+      );
     } catch (_) {
       if (!mounted) return;
-      setState(() => error = 'Could not save playlist');
+      setState(() => error = 'Could not save this source. Please try again.');
     } finally {
       if (mounted) {
         setState(() => submitting = false);

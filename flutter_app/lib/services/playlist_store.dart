@@ -984,6 +984,7 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   List<Playlist> playlists = const [];
+  final Map<int, String> playlistRefreshFeedback = {};
   List<Group> groups = const [];
   List<Channel> channels = const [];
   List<Group> _globalGroups = const [];
@@ -1365,7 +1366,7 @@ class PlaylistStore extends ChangeNotifier {
     ]);
   }
 
-  Future<void> fetchPlaylists() async {
+  Future<void> fetchPlaylists({bool preservePlayback = false}) async {
     loadingPlaylists = true;
     notifyListeners();
     try {
@@ -1375,7 +1376,10 @@ class PlaylistStore extends ChangeNotifier {
       playlists = list;
 
       if (selectedPlaylistId == null && playlists.isNotEmpty) {
-        await selectPlaylist(playlists.first.id);
+        await selectPlaylist(
+          playlists.first.id,
+          preservePlayback: preservePlayback,
+        );
       } else if (selectedPlaylistId != null &&
           !playlists.any((p) => p.id == selectedPlaylistId)) {
         selectedPlaylistId = null;
@@ -1699,6 +1703,7 @@ class PlaylistStore extends ChangeNotifier {
       }
       _globalGroups = const [];
       _globalChannels = const [];
+      await fetchPlaylists(preservePlayback: true);
       return refreshedCount;
     } finally {
       _refreshingPlaylistIds.remove(id);
@@ -2090,17 +2095,19 @@ class PlaylistStore extends ChangeNotifier {
 
   Future<void> deletePlaylist(int id) async {
     await api.delete('/playlists/$id');
+    if (nowPlaying?.playlistId == id) {
+      stopPlayback();
+    }
     if (selectedPlaylistId == id) {
-      if (nowPlaying != null) _stopPlayer();
       selectedPlaylistId = null;
       selectedGroup = null;
       channels = const [];
       groups = const [];
-      nowPlaying = null;
-      epgEntries = const [];
       channelsError = null;
     }
-    await fetchPlaylists();
+    _playlistChannelsCache.remove(id);
+    playlistRefreshFeedback.remove(id);
+    await fetchPlaylists(preservePlayback: true);
     await fetchFavoriteChannels();
     await fetchFavoriteGroups();
     _globalGroups = const [];

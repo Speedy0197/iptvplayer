@@ -126,6 +126,31 @@
       gap: 14px;
     }
 
+    .card.recommended {
+      border: 2px solid var(--brand);
+      box-shadow: 0 6px 22px rgba(1, 95, 91, 0.12);
+    }
+
+    .recommendation {
+      align-self: flex-start;
+      color: var(--brand);
+      background: #e4f3ed;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+
+    .btn:focus-visible, summary:focus-visible {
+      outline: 3px solid var(--brand-2);
+      outline-offset: 4px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .hero, .card { animation: none; opacity: 1; transform: none; }
+      .btn { transition: none; }
+    }
+
     .card:nth-child(2) { animation-delay: 80ms; }
     .card:nth-child(3) { animation-delay: 150ms; }
     .card:nth-child(4) { animation-delay: 220ms; }
@@ -273,8 +298,10 @@
         <p class="version-pill">Latest version: <span id="latest-version">Loading...</span></p>
       </div>
 
+      <p class="subtitle" id="platform-intro">Choose your device to install StreamPilot.</p>
+
       <section class="cards" aria-label="Platform downloads">
-        <article class="card">
+        <article class="card" data-platform="ios">
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-apple"></i>
@@ -303,7 +330,7 @@
           </details>
         </article>
 
-        <article class="card">
+        <article class="card" data-platform="android">
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-android"></i>
@@ -329,7 +356,7 @@
           </details>
         </article>
 
-        <article class="card">
+        <article class="card" data-platform="windows">
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-windows"></i>
@@ -356,7 +383,7 @@
           </div>
         </article>
 
-        <article class="card">
+        <article class="card" data-platform="macos">
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-apple"></i>
@@ -383,7 +410,7 @@
           </div>
         </article>
 
-        <article class="card">
+        <article class="card" data-platform="android-tv">
           <span class="platform">
             <span class="platform-icon">
               <i class="fab fa-android"></i>
@@ -417,12 +444,31 @@
 
   <script>
     (function () {
+      var userAgent = navigator.userAgent || "";
+      var detectedPlatform = /Android/i.test(userAgent)
+        ? (/Android TV|Google TV|AFT|BRAVIA|SHIELD/i.test(userAgent) ? "android-tv" : "android")
+        : /iPhone|iPad|iPod/i.test(userAgent) ||
+            (/Mac/i.test(navigator.platform || "") && navigator.maxTouchPoints > 1)
+          ? "ios"
+          : /Windows/i.test(userAgent) ? "windows"
+            : /Mac/i.test(userAgent) ? "macos" : null;
+      if (detectedPlatform) {
+        var card = document.querySelector('[data-platform="' + detectedPlatform + '"]');
+        var recommendation = document.createElement("span");
+        recommendation.className = "recommendation";
+        recommendation.textContent = "Recommended for this device";
+        card.classList.add("recommended");
+        card.prepend(recommendation);
+        card.parentElement.prepend(card);
+        document.getElementById("platform-intro").textContent =
+          "Start with the download for your device, or choose another platform below.";
+      }
       var host = window.location.hostname || "";
       var path = window.location.pathname || "/";
 
-      var owner = host.endsWith(".github.io") ? host.split(".")[0] : "YOUR_GITHUB_OWNER";
+      var owner = host.endsWith(".github.io") ? host.split(".")[0] : "Speedy0197";
       var segments = path.split("/").filter(Boolean);
-      var repo = segments.length > 0 ? segments[0] : "YOUR_REPO";
+      var repo = host.endsWith(".github.io") && segments.length > 0 ? segments[0] : "iptvplayer";
 
       var latestBase = "https://github.com/" + owner + "/" + repo + "/releases/latest/download/";
       var versionJsonUrl = "./version.json";

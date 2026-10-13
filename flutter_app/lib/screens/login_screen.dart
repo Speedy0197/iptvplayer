@@ -2,17 +2,22 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../config/app_config.dart';
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
+import '../services/tv_pairing.dart';
+import '../widgets/account_page.dart';
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.intentText});
+
+  final String? intentText;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -105,6 +110,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       await auth.login(_emailCtrl.text.trim(), _passwordCtrl.text);
+      TextInput.finishAutofillContext();
     } on ApiException catch (e) {
       final msg = e.message;
       setState(() {
@@ -199,6 +205,7 @@ class _LoginScreenState extends State<LoginScreen> {
           await auth.api.post('/auth/tv/start') as Map<String, dynamic>;
       final deviceCode = (data['device_code'] as String?)?.trim();
       final userCode = (data['user_code'] as String?)?.trim();
+      final pairingToken = (data['pairing_token'] as String?)?.trim();
       final expiresRaw = (data['expires_at'] as String?)?.trim();
       final expiresAt = expiresRaw != null && expiresRaw.isNotEmpty
           ? DateTime.tryParse(expiresRaw)?.toLocal()
@@ -206,15 +213,13 @@ class _LoginScreenState extends State<LoginScreen> {
       if (deviceCode == null ||
           deviceCode.isEmpty ||
           userCode == null ||
-          userCode.isEmpty) {
+          userCode.isEmpty ||
+          pairingToken == null ||
+          !TvPairingLink.isValidToken(pairingToken)) {
         throw const ApiException('Invalid TV login response');
       }
 
-      final pageBase = AppConfig.downloadPageUrl.endsWith('/')
-          ? AppConfig.downloadPageUrl
-          : '${AppConfig.downloadPageUrl}/';
-      final loginUrl =
-          '${pageBase}tv-login.html?device_code=${Uri.encodeQueryComponent(deviceCode)}&api_base=${Uri.encodeQueryComponent(auth.api.baseUrl)}';
+      final loginUrl = TvPairingLink.qrUrl(pairingToken);
 
       if (!mounted) return;
       setState(() {
@@ -249,6 +254,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _pollTvLogin() async {
     final deviceCode = _tvDeviceCode;
+    if (_tvExpiresAt?.isBefore(DateTime.now()) == true) {
+      _tvPollTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          _tvLoginUrl = null;
+          _tvLoginError = 'QR code expired. Generate a new one.';
+        });
+      }
+      return;
+    }
     if (_pollingTvLogin || deviceCode == null || deviceCode.isEmpty) {
       return;
     }
@@ -264,6 +279,17 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       final status = (response['status'] as String?)?.toLowerCase();
+      if (status == 'declined') {
+        _tvPollTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _tvLoginUrl = null;
+            _tvLoginError =
+                'Request declined. Generate a new QR code to try again.';
+          });
+        }
+        return;
+      }
       if (status != 'approved') {
         return;
       }
@@ -281,6 +307,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _tvPollTimer?.cancel();
         if (mounted) {
           setState(() {
+            _tvLoginUrl = null;
             _tvLoginError = 'QR code expired. Generate a new one.';
           });
         }
@@ -299,12 +326,6 @@ class _LoginScreenState extends State<LoginScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(
-            Icons.live_tv_rounded,
-            size: 36,
-            color: theme.colorScheme.primary,
-          ),
-          const SizedBox(height: 8),
           Text(
             'Welcome back',
             style: theme.textTheme.headlineSmall?.copyWith(
@@ -313,13 +334,20 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Sign in to continue watching.',
+            widget.intentText ?? 'Sign in to continue watching.',
             style: theme.textTheme.bodyMedium?.copyWith(color: Colors.white70),
           ),
           const SizedBox(height: 20),
           if (!tvInputMode) ...[
             TextFormField(
               controller: _emailCtrl,
+              enabled: !auth.busy,
+              autofillHints: const [
+                AutofillHints.username,
+                AutofillHints.email,
+              ],
+              textInputAction: TextInputAction.next,
+              autocorrect: false,
               decoration: const InputDecoration(
                 labelText: 'Email',
                 prefixIcon: Icon(Icons.alternate_email),
@@ -339,10 +367,17 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _passwordCtrl,
+              enabled: !auth.busy,
+              autofillHints: const [AutofillHints.password],
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submit(),
+              autocorrect: false,
+              enableSuggestions: false,
               decoration: InputDecoration(
                 labelText: 'Password',
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
+                  tooltip: _obscurePassword ? 'Show password' : 'Hide password',
                   icon: Icon(
                     _obscurePassword
                         ? Icons.visibility_off_outlined
@@ -472,14 +507,14 @@ class _LoginScreenState extends State<LoginScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'TV quick login',
+          'Sign in on your TV',
           style: theme.textTheme.titleMedium?.copyWith(
             fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 6),
         Text(
-          'Scan this QR code with your phone, sign in there, and this TV signs in automatically.',
+          'Scan with your phone. StreamPilot opens the approval screen using your existing app login.',
           style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70),
         ),
         const SizedBox(height: 12),
@@ -507,18 +542,28 @@ class _LoginScreenState extends State<LoginScreen> {
                     padding: const EdgeInsets.all(10),
                     child: QrImageView(
                       data: _tvLoginUrl!,
-                      size: 170,
+                      size: 220,
                       backgroundColor: Colors.white,
                     ),
                   ),
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Enter code ${_tvUserCode ?? '-'} on your phone',
+                  'Matching code: ${_tvUserCode ?? '-'}',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Check the code on both devices, then tap Approve TV.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Or visit ${AppConfig.tvPairingPageUrl} and enter this code.',
+                  textAlign: TextAlign.center,
                 ),
                 if (_tvExpiresAt != null) ...[
                   const SizedBox(height: 6),
@@ -556,58 +601,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthStore>();
     final theme = Theme.of(context);
-    final viewInsets = MediaQuery.viewInsetsOf(context);
-    final isAndroidTv = _isAndroidTv(context);
-
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF0A1020), Color(0xFF0D1117)],
-          ),
-        ),
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  16 + viewInsets.bottom,
-                ),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight - 32,
-                  ),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 980),
-                      child: Card(
-                        margin: const EdgeInsets.all(8),
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: LayoutBuilder(
-                            builder: (context, cardConstraints) {
-                              if (isAndroidTv) {
-                                return _buildTvLoginPanel(theme);
-                              }
-
-                              return _buildLoginForm(theme, auth);
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
+    final tv = _isAndroidTv(context);
+    return AccountPage(
+      maxWidth: tv ? 700 : 460,
+      child: tv
+          ? _buildTvLoginPanel(theme)
+          : AutofillGroup(child: _buildLoginForm(theme, auth)),
     );
   }
 }

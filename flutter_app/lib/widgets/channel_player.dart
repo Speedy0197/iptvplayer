@@ -1,3 +1,4 @@
+import 'playback_feedback.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -583,9 +584,9 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
     setState(() {
       _loading = false;
-      _error = message;
+      _error = friendlyPlaybackError(message);
     });
-    _playbackError.value = message;
+    _playbackError.value = friendlyPlaybackError(message);
   }
 
   @override
@@ -949,14 +950,19 @@ class _ChannelPlayerState extends State<ChannelPlayer>
               children: [
                 Positioned.fill(child: _buildPlayer()),
                 if (_loading && _error == null)
-                  const Positioned.fill(
+                  Positioned.fill(
                     child: ColoredBox(
-                      color: Color(0x66000000),
-                      child: Center(child: CircularProgressIndicator()),
+                      color: const Color(0x66000000),
+                      child: PlaybackLoadingFeedback(
+                        connecting:
+                            _resolvingStream ||
+                            (!_player.state.playing &&
+                                _player.state.position == Duration.zero),
+                      ),
                     ),
                   ),
                 // Nav arrows (non-fullscreen) with auto-hide
-                if (!isTv && widget.onPreviousChannel != null)
+                if (_error == null && !isTv && widget.onPreviousChannel != null)
                   Positioned(
                     left: 8,
                     top: 50,
@@ -978,7 +984,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                       ),
                     ),
                   ),
-                if (!isTv && widget.onNextChannel != null)
+                if (_error == null && !isTv && widget.onNextChannel != null)
                   Positioned(
                     right: 8,
                     top: 50,
@@ -1001,7 +1007,7 @@ class _ChannelPlayerState extends State<ChannelPlayer>
                     ),
                   ),
                 // Bottom control bar (non-fullscreen) — hidden from D-pad focus on TV
-                if (!isTv)
+                if (_error == null && !isTv)
                   Positioned(
                     left: 8,
                     right: 8,
@@ -1062,34 +1068,9 @@ class _ChannelPlayerState extends State<ChannelPlayer>
 
   Widget _buildPlayer() {
     if (_error != null) {
-      return ColoredBox(
-        color: Colors.black,
-        child: Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.redAccent),
-                  const SizedBox(height: 8),
-                  Text(
-                    _error!,
-                    style: const TextStyle(color: Colors.white70),
-                    textAlign: TextAlign.center,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 10),
-                  FilledButton.tonal(
-                    onPressed: () => _openCurrentStream(resetAttempts: true),
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+      return PlaybackUnavailableFeedback(
+        message: _error!,
+        onRetry: () => _openCurrentStream(resetAttempts: true),
       );
     }
 
@@ -1436,154 +1417,128 @@ class _FullscreenChannelViewState extends State<_FullscreenChannelView>
         child: GestureDetector(
           onTapDown: (_) => _showControls(),
           behavior: HitTestBehavior.translucent,
-          child: Stack(
-            children: [
-              // Video
-              Positioned.fill(
-                child: StreamBuilder<bool>(
-                  stream: widget.player.stream.playing,
-                  initialData: widget.player.state.playing,
-                  builder: (context, snapshot) {
-                    final hasStartedPlayback =
-                        (snapshot.data ?? false) ||
-                        widget.player.state.position > Duration.zero;
-                    return Center(
-                      child: hasStartedPlayback
-                          ? Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Video(
-                                  controller: widget.controller,
-                                  controls: NoVideoControls,
-                                  fit: BoxFit.contain,
-                                  pauseUponEnteringBackgroundMode:
-                                      !Platform.isIOS,
-                                  resumeUponEnteringForegroundMode: true,
-                                ),
-                                StreamBuilder<bool>(
-                                  stream: widget.player.stream.buffering,
-                                  initialData: widget.player.state.buffering,
-                                  builder: (context, snapshot) =>
-                                      snapshot.data == true
-                                      ? const Center(
-                                          child: SizedBox(
-                                            width: 40,
-                                            height: 40,
-                                            child: CircularProgressIndicator(),
-                                          ),
-                                        )
-                                      : const SizedBox.shrink(),
-                                ),
-                              ],
-                            )
-                          : const SizedBox(
-                              width: 40,
-                              height: 40,
-                              child: CircularProgressIndicator(),
-                            ),
-                    );
-                  },
-                ),
-              ),
-              if (widget.onPreviousChannel != null)
-                Positioned(
-                  left: safePadding.left + 8,
-                  top: 0,
-                  bottom: 0,
-                  width: 52,
-                  child: AnimatedOpacity(
-                    opacity: _controlsVisible ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Center(
-                      child: _buildTvFocusFrame(
-                        focusNode: isTv ? _tvPreviousChannelFocusNode : null,
-                        child: IconButton(
-                          tooltip: 'Previous channel',
-                          focusNode: isTv ? _tvPreviousChannelFocusNode : null,
-                          onPressed: widget.onPreviousChannel,
-                          icon: const Icon(
-                            Icons.chevron_left,
-                            color: Colors.white,
-                            size: 34,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              if (widget.onNextChannel != null)
-                Positioned(
-                  right: safePadding.right + 8,
-                  top: 0,
-                  bottom: 0,
-                  width: 52,
-                  child: AnimatedOpacity(
-                    opacity: _controlsVisible ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Center(
-                      child: _buildTvFocusFrame(
-                        focusNode: isTv ? _tvNextChannelFocusNode : null,
-                        child: IconButton(
-                          tooltip: 'Next channel',
-                          focusNode: isTv ? _tvNextChannelFocusNode : null,
-                          onPressed: widget.onNextChannel,
-                          icon: const Icon(
-                            Icons.chevron_right,
-                            color: Colors.white,
-                            size: 34,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              // Bottom control bar
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 16,
-                child: AnimatedOpacity(
-                  opacity: _controlsVisible ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 300),
-                  child: _buildFullscreenControlBar(isTv: isTv),
-                ),
-              ),
-              Positioned.fill(
-                child: ValueListenableBuilder<String?>(
-                  valueListenable: widget.playbackError,
-                  builder: (context, error, _) => error == null
-                      ? const SizedBox.shrink()
-                      : ColoredBox(
-                          color: Colors.black87,
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  error,
-                                  style: const TextStyle(
-                                    fontSize: 22,
-                                    color: Colors.white,
+          child: ValueListenableBuilder<String?>(
+            valueListenable: widget.playbackError,
+            builder: (context, error, _) => Stack(
+              children: [
+                // Video
+                Positioned.fill(
+                  child: StreamBuilder<bool>(
+                    stream: widget.player.stream.playing,
+                    initialData: widget.player.state.playing,
+                    builder: (context, snapshot) {
+                      final hasStartedPlayback =
+                          (snapshot.data ?? false) ||
+                          widget.player.state.position > Duration.zero;
+                      return Center(
+                        child: hasStartedPlayback
+                            ? Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Video(
+                                    controller: widget.controller,
+                                    controls: NoVideoControls,
+                                    fit: BoxFit.contain,
+                                    pauseUponEnteringBackgroundMode:
+                                        !Platform.isIOS,
+                                    resumeUponEnteringForegroundMode: true,
                                   ),
-                                ),
-                                const SizedBox(height: 20),
-                                FilledButton(
-                                  autofocus: true,
-                                  onPressed: widget.onRetry,
-                                  child: const Text('Retry'),
-                                ),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  'BACK to channels',
-                                  style: TextStyle(color: Colors.white70),
-                                ),
-                              ],
+                                  StreamBuilder<bool>(
+                                    stream: widget.player.stream.buffering,
+                                    initialData: widget.player.state.buffering,
+                                    builder: (context, snapshot) =>
+                                        snapshot.data == true
+                                        ? const PlaybackLoadingFeedback(
+                                            connecting: false,
+                                          )
+                                        : const SizedBox.shrink(),
+                                  ),
+                                ],
+                              )
+                            : const PlaybackLoadingFeedback(connecting: true),
+                      );
+                    },
+                  ),
+                ),
+                if (error == null) ...[
+                  if (widget.onPreviousChannel != null)
+                    Positioned(
+                      left: safePadding.left + 8,
+                      top: 0,
+                      bottom: 0,
+                      width: 52,
+                      child: AnimatedOpacity(
+                        opacity: _controlsVisible ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 300),
+                        child: Center(
+                          child: _buildTvFocusFrame(
+                            focusNode: isTv
+                                ? _tvPreviousChannelFocusNode
+                                : null,
+                            child: IconButton(
+                              tooltip: 'Previous channel',
+                              focusNode: isTv
+                                  ? _tvPreviousChannelFocusNode
+                                  : null,
+                              onPressed: widget.onPreviousChannel,
+                              icon: const Icon(
+                                Icons.chevron_left,
+                                color: Colors.white,
+                                size: 34,
+                              ),
                             ),
                           ),
                         ),
-                ),
-              ),
-            ],
+                      ),
+                    ),
+                  if (widget.onNextChannel != null)
+                    Positioned(
+                      right: safePadding.right + 8,
+                      top: 0,
+                      bottom: 0,
+                      width: 52,
+                      child: AnimatedOpacity(
+                        opacity: _controlsVisible ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 300),
+                        child: Center(
+                          child: _buildTvFocusFrame(
+                            focusNode: isTv ? _tvNextChannelFocusNode : null,
+                            child: IconButton(
+                              tooltip: 'Next channel',
+                              focusNode: isTv ? _tvNextChannelFocusNode : null,
+                              onPressed: widget.onNextChannel,
+                              icon: const Icon(
+                                Icons.chevron_right,
+                                color: Colors.white,
+                                size: 34,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // Bottom control bar
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 16,
+                    child: AnimatedOpacity(
+                      opacity: _controlsVisible ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: _buildFullscreenControlBar(isTv: isTv),
+                    ),
+                  ),
+                ],
+                if (error != null)
+                  Positioned.fill(
+                    child: PlaybackUnavailableFeedback(
+                      message: error,
+                      fullscreen: true,
+                      onRetry: widget.onRetry,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

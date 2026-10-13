@@ -24,7 +24,7 @@ class SearchChannelResultTile extends StatelessWidget {
 
     return ListTile(
       focusNode: focusNode,
-      dense: true,
+      isThreeLine: false,
       leading: ChannelLogoAvatar(
         logoUrl: channel.logoUrl,
         radius: 14,
@@ -35,42 +35,18 @@ class SearchChannelResultTile extends StatelessWidget {
               message: channel.name,
               child: Text(
                 channel.name,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             )
-          : Text(channel.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Chip(
-              label: Text(playlistName, style: const TextStyle(fontSize: 11)),
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: VisualDensity.compact,
-            ),
-            const SizedBox(width: 4),
-            Chip(
-              label: showDesktopTooltips
-                  ? Tooltip(
-                      message: channel.groupName,
-                      child: Text(
-                        channel.groupName,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    )
-                  : Text(
-                      channel.groupName,
-                      style: const TextStyle(fontSize: 11),
-                    ),
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: VisualDensity.compact,
-            ),
-          ],
-        ),
+          : Text(channel.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        [
+          playlistName,
+          if (channel.groupName.trim().isNotEmpty) channel.groupName,
+        ].join(' · '),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
       ),
       onTap: onTap,
     );

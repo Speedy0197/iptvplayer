@@ -136,6 +136,40 @@ void main() {
       expect(output.opened, hasLength(1));
     });
 
+    testWidgets('initial connection and a later refill have distinct labels', (
+      tester,
+    ) async {
+      await mount(tester, alreadyPlaying: false);
+      expect(find.text('Connecting…'), findsOneWidget);
+      output.emitPlaying(true);
+      output.emitBuffering(true);
+      await tester.pump();
+      expect(find.text('Buffering…'), findsOneWidget);
+      expect(find.text('Connecting…'), findsNothing);
+    });
+
+    testWidgets(
+      'unavailable playback keeps provider URLs and credentials out of UI',
+      (tester) async {
+        await mount(tester);
+        for (var i = 0; i < 3; i++) {
+          output.emitError(
+            'HTTP 403 https://provider.invalid/live/private-user/private-password/7?token=secret',
+          );
+          await tester.pump();
+        }
+        expect(find.text('Unavailable'), findsOneWidget);
+        expect(find.textContaining('source account'), findsOneWidget);
+        expect(find.byTooltip('Pause'), findsNothing);
+        expect(find.byTooltip('Play'), findsNothing);
+        expect(find.byTooltip('Mute'), findsNothing);
+        expect(find.text('Retry'), findsOneWidget);
+        expect(find.textContaining('private-password'), findsNothing);
+        expect(find.textContaining('provider.invalid'), findsNothing);
+        expect(store.playbackError.value, isNot(contains('private-user')));
+      },
+    );
+
     testWidgets('a startup that never finishes still exhausts retries', (
       tester,
     ) async {

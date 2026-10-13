@@ -8,6 +8,9 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'config/app_config.dart';
+import 'config/app_theme.dart';
+import 'services/tv_pairing.dart';
+import 'screens/tv_pairing_screen.dart';
 import 'config/device_utils.dart';
 import 'config/ui_constants.dart';
 import 'screens/home_screen.dart';
@@ -83,71 +86,104 @@ Future<void> main() async {
   }
 }
 
-class IptvFlutterApp extends StatelessWidget {
+class IptvFlutterApp extends StatefulWidget {
   final ApiClient api;
 
   const IptvFlutterApp({super.key, required this.api});
+
+  @override
+  State<IptvFlutterApp> createState() => _IptvFlutterAppState();
+}
+
+class _IptvFlutterAppState extends State<IptvFlutterApp>
+    with WidgetsBindingObserver {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // Register before WidgetsApp: it normalizes URLs and discards authority.
+    // Validate the original native URL before that loses host information.
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation information) async {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return false;
+    final uri = information.uri;
+    final pairing = TvPairingLink.tryParse(uri.toString());
+    if (pairing != null) {
+      navigator.push(_pairingRoute(pairing.token));
+      return true;
+    }
+    if (uri.hasScheme || uri.hasAuthority) {
+      navigator.push(_unsupportedRoute());
+      return true;
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<AuthStore>(
-          create: (_) => AuthStore(api: api)..init(),
+          create: (_) => AuthStore(api: widget.api)..init(),
         ),
         ChangeNotifierProvider<PlaylistStore>(
-          create: (_) => PlaylistStore(api: api),
+          create: (_) => PlaylistStore(api: widget.api),
         ),
       ],
       child: MaterialApp(
+        navigatorKey: _navigatorKey,
         title: 'StreamPilot',
-        theme: ThemeData(
-          brightness: Brightness.dark,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF1E88E5),
-            brightness: Brightness.dark,
-          ),
-          scaffoldBackgroundColor: const Color(0xFF0D1117),
-          cardTheme: CardThemeData(
-            color: const Color(0xFF111826),
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: const BorderSide(color: Color(0xFF22304A), width: 1),
+        theme: createStreamPilotTheme(),
+        onGenerateInitialRoutes: (initialRoute) {
+          final pairing = TvPairingLink.tryParse(initialRoute);
+          return [
+            MaterialPageRoute<void>(
+              settings: const RouteSettings(name: '/'),
+              builder: (_) => const _AuthGate(),
             ),
-          ),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFF0B1220),
-            foregroundColor: Colors.white,
-            elevation: 0,
-          ),
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: const Color(0xFF0E1726),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFF273857)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFF273857)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(
-                color: Color(0xFF3EA6FF),
-                width: 1.2,
-              ),
-            ),
-          ),
-          dividerColor: const Color(0xFF243147),
-          useMaterial3: true,
-        ),
-        home: const _AuthGate(),
+            if (pairing != null) _pairingRoute(pairing.token),
+          ];
+        },
+        onGenerateRoute: (settings) {
+          if (settings.name == '/') {
+            return MaterialPageRoute<void>(
+              settings: const RouteSettings(name: '/'),
+              builder: (_) => const _AuthGate(),
+            );
+          }
+          final pairing = TvPairingLink.tryParse(settings.name);
+          if (pairing != null) return _pairingRoute(pairing.token);
+          return _unsupportedRoute();
+        },
       ),
     );
   }
 }
+
+Route<void> _unsupportedRoute() => MaterialPageRoute<void>(
+  settings: const RouteSettings(name: '/unsupported-link'),
+  builder: (_) => Scaffold(
+    appBar: AppBar(title: const Text('StreamPilot')),
+    body: const Center(child: Text('This link is not supported.')),
+  ),
+);
+
+Route<void> _pairingRoute(String? token) => MaterialPageRoute<void>(
+  // Route names are visible to observers; keep opaque pairing values out.
+  settings: const RouteSettings(name: '/tv/activate'),
+  builder: (_) => TvPairingScreen(pairingToken: token),
+);
 
 class _AuthGate extends StatefulWidget {
   const _AuthGate();

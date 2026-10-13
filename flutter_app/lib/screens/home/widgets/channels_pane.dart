@@ -36,6 +36,7 @@ class _ChannelsPaneState extends State<ChannelsPane> {
   final ScrollController _scrollController = ScrollController();
   int? _lastNowPlayingId;
   bool _pendingScrollToNowPlaying = false;
+  bool _firstBuild = true;
   double _channelTileHeight = _kChannelTileHeight;
 
   @override
@@ -99,9 +100,13 @@ class _ChannelsPaneState extends State<ChannelsPane> {
     // the time the post-frame callback fires.
     if (nowPlayingId != null && nowPlayingId != _lastNowPlayingId) {
       _lastNowPlayingId = nowPlayingId;
-      _pendingScrollToNowPlaying = true;
+      final restoredOffset =
+          _firstBuild &&
+          PageStorage.maybeOf(context)?.readState(context) is double;
+      _pendingScrollToNowPlaying = !restoredOffset;
     }
 
+    _firstBuild = false;
     if (_pendingScrollToNowPlaying) {
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _scrollToNowPlaying(),
@@ -231,6 +236,41 @@ class _ChannelTile extends StatelessWidget {
       icon: const Icon(Icons.more_horiz),
     );
 
+    if (!isTv) {
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ExcludeFocus(
+            child: IconButton(
+              tooltip: c.isFavorite
+                  ? 'Remove from favorites'
+                  : 'Add to favorites',
+              // Touch actions never become another stop in channel keyboard navigation.
+              onPressed: () async {
+                try {
+                  await store.toggleFavorite(c);
+                } catch (_) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Could not update favorites. Try again.'),
+                      ),
+                    );
+                  }
+                }
+              },
+              icon: Icon(
+                c.isFavorite ? Icons.star : Icons.star_border,
+                color: c.isFavorite ? Colors.amber : null,
+                size: 20,
+              ),
+            ),
+          ),
+          trailing,
+        ],
+      );
+    }
+
     // Keep touch details available on large tablets too. On TV, long-select
     // opens the same sheet without adding a second D-pad stop to each row.
     if (isTv) {
@@ -253,15 +293,15 @@ class _ChannelTile extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           ChannelLogoAvatar(logoUrl: c.logoUrl, radius: 16),
-          if (c.isFavorite)
+          if (selected)
             PositionedDirectional(
               end: -3,
               bottom: -3,
               child: const Icon(
-                Icons.star,
+                Icons.play_circle_fill,
                 size: 14,
-                color: Colors.amber,
-                semanticLabel: 'Favorite',
+                color: Colors.lightGreenAccent,
+                semanticLabel: 'Playing',
               ),
             ),
         ],

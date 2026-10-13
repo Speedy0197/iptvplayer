@@ -1,231 +1,106 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>StreamPilot TV Login</title>
-  <style>
-    :root {
-      --bg: #0d1117;
-      --panel: #111827;
-      --line: #2b3242;
-      --text: #f3f4f6;
-      --muted: #9ca3af;
-      --accent: #14b8a6;
-      --danger: #fca5a5;
-      --ok: #86efac;
-      --radius: 14px;
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      font-family: "Avenir Next", "Segoe UI", sans-serif;
-      color: var(--text);
-      background:
-        radial-gradient(50rem 26rem at -15% -10%, #1f2937 0%, transparent 65%),
-        radial-gradient(46rem 24rem at 110% -10%, #0f766e 0%, transparent 65%),
-        var(--bg);
-      padding: 20px;
-    }
-
-    .card {
-      width: min(520px, 94vw);
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      padding: 22px;
-      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
-    }
-
-    h1 {
-      margin: 0;
-      font-size: 1.5rem;
-    }
-
-    p {
-      margin: 8px 0 0;
-      color: var(--muted);
-    }
-
-    form {
-      margin-top: 18px;
-      display: grid;
-      gap: 12px;
-    }
-
-    label {
-      font-size: 0.9rem;
-      color: var(--muted);
-    }
-
-    input {
-      width: 100%;
-      margin-top: 6px;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 11px 12px;
-      color: var(--text);
-      background: #0b1220;
-      outline: none;
-    }
-
-    input:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.18);
-    }
-
-    button {
-      margin-top: 4px;
-      border: 0;
-      border-radius: 10px;
-      padding: 12px 14px;
-      font-weight: 700;
-      color: #042f2e;
-      background: linear-gradient(130deg, #2dd4bf, #14b8a6);
-      cursor: pointer;
-    }
-
-    button:disabled {
-      opacity: 0.7;
-      cursor: default;
-    }
-
-    .msg {
-      margin-top: 12px;
-      font-size: 0.95rem;
-      min-height: 1.4em;
-    }
-
-    .msg.error {
-      color: var(--danger);
-    }
-
-    .msg.success {
-      color: var(--ok);
-    }
-
-    .small {
-      margin-top: 14px;
-      font-size: 0.84rem;
-      color: var(--muted);
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Connect your TV · StreamPilot</title>
+<style>
+:root{color-scheme:dark;--bg:#10151b;--panel:#18212b;--line:#334252;--text:#edf4f9;--muted:#aab8c6;--accent:#54ddc6}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at top,#143b40,transparent 65%),var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}.card{width:min(100%,460px);padding:28px;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:0 24px 70px #0005}.brand{color:var(--accent);font-size:14px;font-weight:700;letter-spacing:.12em}h1{font-size:28px;line-height:1.2;margin:16px 0 12px}p{color:var(--muted);margin:10px 0}label{display:block;margin-top:16px}input{display:block;width:100%;margin-top:6px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}input:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:3px}button,.app-link{display:block;width:100%;padding:12px;margin-top:18px;border:0;border-radius:10px;background:var(--accent);color:#073d36;font:inherit;font-weight:700;cursor:pointer;text-align:center;text-decoration:none}button.secondary,.app-link{background:transparent;color:var(--text);border:1px solid var(--line)}button:disabled{opacity:.55;cursor:wait}.code{font:700 32px/1.2 ui-monospace,monospace;letter-spacing:.2em;color:var(--text);margin:18px 0}.detail{padding:16px;border-radius:12px;background:var(--bg)}.message{min-height:24px;margin-top:18px}.error{color:#ffb9b1}.success{color:var(--accent)}.small{font-size:13px}[hidden]{display:none!important}
+</style>
 </head>
 <body>
-  <main class="card">
-    <h1>Sign in to StreamPilot TV</h1>
-    <p>Log in here to approve the sign-in request shown on your TV.</p>
-
-    <form id="tv-login-form">
-      <label>
-        TV code
-        <input id="user-code" name="userCode" type="text" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit code from TV" required />
-      </label>
-
-      <label>
-        Email
-        <input id="email" name="email" type="email" autocomplete="email" required />
-      </label>
-
-      <label>
-        Password
-        <input id="password" name="password" type="password" autocomplete="current-password" required />
-      </label>
-
-      <button id="submit-btn" type="submit">Approve TV Login</button>
-    </form>
-
-    <div id="message" class="msg" role="status" aria-live="polite"></div>
-    <p class="small">After success, return to your TV. It will log in automatically.</p>
-  </main>
-
-  <script>
-    (function () {
-      var params = new URLSearchParams(window.location.search);
-      var deviceCode = (params.get('device_code') || '').trim();
-      var apiBase = (params.get('api_base') || 'https://iptv.florian-zug.de/api/v1').trim();
-
-      var form = document.getElementById('tv-login-form');
-      var codeInput = document.getElementById('user-code');
-      var emailInput = document.getElementById('email');
-      var passwordInput = document.getElementById('password');
-      var submitBtn = document.getElementById('submit-btn');
-      var message = document.getElementById('message');
-
-      function setMessage(text, kind) {
-        message.textContent = text || '';
-        message.className = 'msg' + (kind ? ' ' + kind : '');
-      }
-
-      if (!deviceCode) {
-        setMessage('Missing device code in QR link. Scan the QR code from your TV again.', 'error');
-        submitBtn.disabled = true;
-        return;
-      }
-
-      codeInput.addEventListener('input', function () {
-        codeInput.value = codeInput.value.replace(/\D+/g, '').slice(0, 6);
-      });
-
-      form.addEventListener('submit', async function (event) {
-        event.preventDefault();
-        setMessage('', '');
-
-        var userCode = (codeInput.value || '').trim();
-        var email = (emailInput.value || '').trim();
-        var password = passwordInput.value || '';
-
-        if (!userCode || !email || !password) {
-          setMessage('Please complete all fields.', 'error');
-          return;
-        }
-
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Approving...';
-
-        try {
-          var response = await fetch(apiBase + '/auth/tv/approve', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              device_code: deviceCode,
-              user_code: userCode,
-              email: email,
-              password: password
-            })
-          });
-
-          var payload = null;
-          try {
-            payload = await response.json();
-          } catch (_) {
-            payload = null;
-          }
-
-          if (!response.ok) {
-            var err = payload && payload.error ? payload.error : 'Unable to approve TV login.';
-            throw new Error(err);
-          }
-
-          setMessage('Success. Return to your TV to continue.', 'success');
-          passwordInput.value = '';
-        } catch (err) {
-          setMessage(err && err.message ? err.message : 'Login approval failed.', 'error');
-        } finally {
-          submitBtn.disabled = false;
-          submitBtn.textContent = 'Approve TV Login';
-        }
-      });
-    })();
-  </script>
+<main class="card">
+<div class="brand">STREAMPILOT</div>
+<h1 id="title">Connect your TV</h1>
+<p id="intro">Sign in, check the matching TV code, then approve this request.</p>
+<div id="request" class="detail" hidden><div id="device-name">StreamPilot TV</div><div id="matching-code" class="code"></div><p id="expiry" class="small"></p></div>
+<a id="open-app" class="app-link" hidden>Open in StreamPilot</a>
+<form id="login-form">
+<label id="code-label" hidden>TV code<input id="user-code" name="userCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code from your TV"></label>
+<label>Email<input id="email" name="email" type="email" autocomplete="username" required></label>
+<label>Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+<button id="sign-in" type="submit">Sign in to continue</button>
+</form>
+<div id="confirmation" hidden><p id="account"></p><p>Only approve if this code matches the TV you want to sign in to.</p><button id="approve" type="button">Approve TV</button><button id="decline" type="button" class="secondary">Decline</button></div>
+<div id="message" class="message" role="status" aria-live="polite"></div>
+<p class="small">This request expires after a few minutes. Generate a new code on your TV if it expires.</p>
+</main>
+<script>
+(function () {
+ 'use strict';
+ const $ = id => document.getElementById(id);
+ const fragment = new URLSearchParams(window.location.hash.slice(1));
+ const query = new URLSearchParams(window.location.search);
+ let pairingToken = (fragment.get('pairing_token') || '').trim();
+ // The static legacy page is retained for QR links from older installed TVs.
+ const legacyDevice = window.location.pathname.endsWith('/tv-login.html') ? (query.get('device_code') || '').trim() : '';
+ const apiBase = window.location.pathname === '/tv/activate' ? '/api/v1' : 'https://iptv.florian-zug.de/api/v1';
+ let authToken = '', session = null, legacyPassword = '', accountEmail = '', busy = false, terminal = false;
+ window.history.replaceState(null, '', window.location.pathname);
+ const validToken = token => /^[A-Za-z0-9_-]{32,128}$/.test(token);
+ function message(text, kind) { $('message').textContent = text; $('message').className = 'message ' + (kind || ''); }
+ function setBusy(value) { busy = value; for (const id of ['sign-in', 'approve', 'decline']) $(id).disabled = value || terminal; }
+ function finish(text) { terminal = true; authToken = ''; legacyPassword = ''; $('password').value = ''; $('login-form').hidden = true; $('confirmation').hidden = true; $('open-app').hidden = true; message(text, 'success'); }
+ async function api(path, body, token) {
+  const options = { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' };
+  if (body !== undefined) options.body = JSON.stringify(body);
+  if (token) options.headers.Authorization = 'Bearer ' + token;
+  const response = await fetch(apiBase + path, options);
+  let result = {}; try { result = await response.json(); } catch (_) {}
+  if (!response.ok) {
+   if (response.status === 410 || (response.status === 404 && path !== '/auth/login' && path !== '/auth/tv/lookup')) {
+    terminal = true; $('login-form').hidden = true; $('confirmation').hidden = true; $('open-app').hidden = true;
+    throw new Error('This TV request expired or was used. Generate a new QR code on your TV and scan it again.');
+   }
+   throw new Error(result.error || 'Unable to connect. Please try again.');
+  }
+  return result;
+ }
+ async function loadSession() {
+  session = await api('/auth/tv/session?pairing_token=' + encodeURIComponent(pairingToken));
+  $('request').hidden = false; $('device-name').textContent = session.device_name || 'StreamPilot TV'; $('matching-code').textContent = session.user_code;
+  $('expiry').textContent = 'Expires ' + new Date(session.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('code-label').hidden = true;
+  $('open-app').href = 'streampilot://tv/activate?pairing_token=' + encodeURIComponent(pairingToken); $('open-app').hidden = false;
+  if (session.status === 'approved') finish('This TV request is already approved. Return to your TV.');
+  if (session.status === 'declined') finish('This TV request was declined. Generate a new code on your TV to try again.');
+ }
+ $('user-code').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 6); });
+ $('login-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (busy || terminal) return; setBusy(true); message('');
+  try {
+   const userCode = $('user-code').value.trim();
+   if (!pairingToken && !legacyDevice) {
+    if (!/^\d{6}$/.test(userCode)) throw new Error('Enter the six-digit code shown on your TV.');
+    const lookup = await api('/auth/tv/lookup', { user_code: userCode }); pairingToken = lookup.pairing_token;
+    if (!validToken(pairingToken)) throw new Error('Invalid TV request. Scan a new QR code.');
+    await loadSession(); if (terminal) return;
+   }
+   if (legacyDevice && !/^\d{6}$/.test(userCode)) throw new Error('Enter the six-digit code shown on your TV.');
+   accountEmail = $('email').value.trim();
+   const password = $('password').value;
+   const account = await api('/auth/login', { email: accountEmail, password: password });
+   authToken = account.token; if (legacyDevice) legacyPassword = password;
+   $('password').value = ''; $('account').textContent = 'Approving as ' + (account.email || account.username || accountEmail);
+   if (legacyDevice) { $('request').hidden = false; $('matching-code').textContent = userCode; $('decline').hidden = true; }
+   else { await loadSession(); if (terminal) return; }
+   $('login-form').hidden = true; $('confirmation').hidden = false;
+  } catch (error) { message(error.message, 'error'); } finally { setBusy(false); }
+ });
+ async function decide(approve) {
+  if (busy || terminal || !authToken) return; setBusy(true); message('');
+  try {
+   if (legacyDevice) await api('/auth/tv/approve', { device_code: legacyDevice, user_code: $('user-code').value.trim(), email: accountEmail, password: legacyPassword });
+   else await api(approve ? '/auth/tv/approve-session' : '/auth/tv/decline-session', { pairing_token: pairingToken }, authToken);
+   finish(approve ? 'TV approved. Return to your TV to continue.' : 'TV request declined. No account was shared with the TV.');
+  } catch (error) { message(error.message, 'error'); } finally { setBusy(false); }
+ }
+ $('approve').addEventListener('click', () => decide(true)); $('decline').addEventListener('click', () => decide(false));
+ if (pairingToken && !validToken(pairingToken)) { terminal = true; $('login-form').hidden = true; message('Invalid QR link. Generate a new code on your TV and scan it again.', 'error'); }
+ else if (pairingToken) { setBusy(true); loadSession().catch(error => message(error.message, 'error')).finally(() => setBusy(false)); }
+ else { $('code-label').hidden = false; $('user-code').required = true; }
+})();
+</script>
 </body>
 </html>

@@ -110,6 +110,19 @@ void main() {
   );
 
   testWidgets(
+    'fullscreen errors remove playback controls from interaction',
+    (tester) async {
+      engine.failOpen = true;
+      await mount(tester);
+      expect(find.text('Unavailable'), findsOneWidget);
+      expect(find.byTooltip('Exit Fullscreen'), findsNothing);
+      expect(find.byTooltip('Mute'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
     'fullscreen Retry works after the preview is recreated',
     (tester) async {
       engine.failOpen = true;

@@ -66,6 +66,19 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+    'guide identity follows cursor while playing identity stays fixed',
+    (tester) async {
+      store.nowPlaying = store.channels.first;
+      await mount(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      expect(find.text('PLAYING · Channel 00'), findsOneWidget);
+      expect(find.text('GUIDE FOR · Channel 01'), findsOneWidget);
+      expect(watched, isEmpty);
+    },
+  );
+
   testWidgets('one OK opens playback and return keeps the channel cursor', (
     tester,
   ) async {

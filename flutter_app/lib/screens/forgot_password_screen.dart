@@ -1,449 +1,334 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-
 import '../services/api_client.dart';
 import '../services/auth_store.dart';
+import '../widgets/account_page.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
-
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
 }
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
-  final _requestFormKey = GlobalKey<FormState>();
-  final _resetFormKey = GlobalKey<FormState>();
-
-  final _emailCtrl = TextEditingController();
-  final _tokenCtrl = TextEditingController();
-  final _newPasswordCtrl = TextEditingController();
-  final _confirmCtrl = TextEditingController();
-
-  bool _requestBusy = false;
-  bool _resetBusy = false;
-  String? _requestMessage;
-  String? _resetError;
+  final _formKey = GlobalKey<FormState>();
+  final _email = TextEditingController();
+  final _code = TextEditingController();
+  final _password = TextEditingController();
+  final _confirm = TextEditingController();
+  int _step = 0;
+  bool _busy = false;
+  bool _showPassword = false;
+  String? _error;
 
   @override
   void dispose() {
-    _emailCtrl.dispose();
-    _tokenCtrl.dispose();
-    _newPasswordCtrl.dispose();
-    _confirmCtrl.dispose();
+    _email.dispose();
+    _code.dispose();
+    _password.dispose();
+    _confirm.dispose();
     super.dispose();
   }
 
-  Future<void> _editField({
-    required String title,
-    required TextEditingController controller,
-    bool obscure = false,
-    TextInputType? keyboardType,
-  }) async {
-    final tempController = TextEditingController(text: controller.text);
+  Future<void> _editField(
+    String label,
+    TextEditingController controller,
+    bool obscure,
+    TextInputType keyboard,
+  ) async {
+    final edit = TextEditingController(text: controller.text);
     final value = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: tempController,
-            autofocus: true,
-            obscureText: obscure,
-            keyboardType: keyboardType,
-            decoration: InputDecoration(labelText: title),
+      builder: (ctx) => AlertDialog(
+        title: Text(label),
+        content: TextField(
+          controller: edit,
+          autofocus: true,
+          obscureText: obscure,
+          keyboardType: keyboard,
+          decoration: InputDecoration(labelText: label),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(
-                tempController.text,
-              ),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, edit.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
     );
-
-    tempController.dispose();
-    if (value == null || !mounted) return;
-    setState(() {
-      controller.text = value.trimRight();
-    });
+    edit.dispose();
+    if (mounted && value != null) setState(() => controller.text = value);
   }
 
-  Future<void> _requestReset() async {
-    final directionalNavigation =
-        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
-    if (!directionalNavigation) {
-      if (!_requestFormKey.currentState!.validate()) {
-        return;
-      }
-    } else {
-      final email = _emailCtrl.text.trim();
-      if (email.isEmpty || !email.contains('@')) {
-        setState(() {
-          _requestMessage = 'Enter a valid email';
-        });
-        return;
-      }
-    }
-
+  Future<void> _perform(
+    Future<void> Function(AuthStore auth) action, {
+    required int nextStep,
+  }) async {
+    if (_busy) return;
     setState(() {
-      _requestBusy = true;
-      _requestMessage = null;
-      _resetError = null;
+      _busy = true;
+      _error = null;
     });
-
-    final auth = context.read<AuthStore>();
     try {
-      await auth.requestPasswordReset(_emailCtrl.text.trim());
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _requestMessage =
-            'If an account exists for this email, a 4-digit reset code has been sent.';
-      });
+      await action(context.read<AuthStore>());
+      if (mounted) setState(() => _step = nextStep);
     } on ApiException catch (e) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _requestMessage = e.message;
-      });
+      if (mounted) setState(() => _error = e.message);
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _requestMessage = 'Unable to send reset request right now.';
-      });
-    } finally {
       if (mounted) {
-        setState(() {
-          _requestBusy = false;
-        });
+        setState(
+          () => _error = 'Unable to continue right now. Please try again.',
+        );
       }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _submitNewPassword() async {
-    final directionalNavigation =
-        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
-    if (!directionalNavigation) {
-      if (!_resetFormKey.currentState!.validate()) {
-        return;
-      }
-    } else {
-      final code = _tokenCtrl.text.trim();
-      final newPassword = _newPasswordCtrl.text;
-      final confirm = _confirmCtrl.text;
-      if (!RegExp(r'^\d{4}$').hasMatch(code)) {
-        setState(() {
-          _resetError = 'Enter the 4-digit code';
-        });
-        return;
-      }
-      if (newPassword.length < 8) {
-        setState(() {
-          _resetError = 'At least 8 characters';
-        });
-        return;
-      }
-      if (confirm != newPassword) {
-        setState(() {
-          _resetError = 'Passwords do not match';
-        });
-        return;
-      }
+  String? _emailError(String? value) {
+    final v = (value ?? '').trim();
+    return v.isEmpty || !v.contains('@') ? 'Enter a valid email' : null;
+  }
+
+  Future<void> _requestCode() async {
+    final error = _emailError(_email.text);
+    if (error != null) {
+      setState(() => _error = error);
+      _formKey.currentState?.validate();
+      return;
     }
+    await _perform(
+      (auth) => auth.requestPasswordReset(_email.text.trim()),
+      nextStep: 1,
+    );
+  }
 
-    setState(() {
-      _resetBusy = true;
-      _resetError = null;
-    });
+  Future<void> _verifyCode() async {
+    if (!RegExp(r'^\d{4}$').hasMatch(_code.text.trim())) {
+      setState(() => _error = 'Enter the 4-digit code');
+      _formKey.currentState?.validate();
+      return;
+    }
+    await _perform(
+      (auth) => auth.verifyResetToken(_email.text.trim(), _code.text.trim()),
+      nextStep: 2,
+    );
+  }
 
-    final auth = context.read<AuthStore>();
-    final email = _emailCtrl.text.trim();
-    final code = _tokenCtrl.text.trim();
-    try {
-      await auth.verifyResetToken(email, code);
-      await auth.resetPassword(email, code, _newPasswordCtrl.text);
-      if (!mounted) {
-        return;
-      }
+  Future<void> _updatePassword() async {
+    if (_password.text.length < 8 || _confirm.text != _password.text) {
+      setState(
+        () => _error = _password.text.length < 8
+            ? 'At least 8 characters'
+            : 'Passwords do not match',
+      );
+      _formKey.currentState?.validate();
+      return;
+    }
+    await _perform((auth) async {
+      await auth.resetPassword(
+        _email.text.trim(),
+        _code.text.trim(),
+        _password.text,
+      );
+      if (!mounted) return;
+      TextInput.finishAutofillContext();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Password updated. Please sign in.')),
       );
-      Navigator.of(context).pop();
-    } on ApiException catch (e) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _resetError = e.message;
-      });
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _resetError = 'Password reset failed.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _resetBusy = false;
-        });
-      }
+      Navigator.of(context).maybePop();
+    }, nextStep: 2);
+  }
+
+  Widget _field(
+    String label,
+    TextEditingController controller, {
+    TextInputType keyboard = TextInputType.text,
+    bool password = false,
+    Iterable<String>? autofill,
+    String? Function(String?)? validator,
+  }) {
+    if (MediaQuery.maybeNavigationModeOf(context) ==
+        NavigationMode.directional) {
+      return OutlinedButton.icon(
+        onPressed: _busy
+            ? null
+            : () => _editField(label, controller, password, keyboard),
+        icon: Icon(password ? Icons.lock_outline : Icons.edit_outlined),
+        label: Text(
+          controller.text.isEmpty || password ? label : controller.text,
+        ),
+      );
     }
+    return TextFormField(
+      key: ValueKey(label),
+      controller: controller,
+      enabled: !_busy,
+      keyboardType: keyboard,
+      obscureText: password && !_showPassword,
+      autofillHints: autofill,
+      autocorrect: !password,
+      enableSuggestions: !password,
+      textInputAction: TextInputAction.next,
+      validator: validator,
+      inputFormatters: keyboard == TextInputType.number
+          ? [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(4),
+            ]
+          : null,
+      decoration: InputDecoration(
+        labelText: label,
+        suffixIcon: password
+            ? IconButton(
+                tooltip: _showPassword ? 'Hide password' : 'Show password',
+                onPressed: () => setState(() => _showPassword = !_showPassword),
+                icon: Icon(
+                  _showPassword
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                ),
+              )
+            : null,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final directionalNavigation =
-        MediaQuery.maybeNavigationModeOf(context) == NavigationMode.directional;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Reset password')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Form(
-                      key: _requestFormKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text(
-                            'Step 1: Request reset code',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          if (!directionalNavigation)
-                            TextFormField(
-                              controller: _emailCtrl,
-                              decoration: const InputDecoration(
-                                labelText: 'Email',
-                                prefixIcon: Icon(Icons.alternate_email),
-                              ),
-                              keyboardType: TextInputType.emailAddress,
-                              validator: (value) {
-                                final v = value?.trim() ?? '';
-                                if (v.isEmpty) {
-                                  return 'Required';
-                                }
-                                if (!v.contains('@')) {
-                                  return 'Enter a valid email';
-                                }
-                                return null;
-                              },
-                            )
-                          else
-                            OutlinedButton.icon(
-                              onPressed: _requestBusy
-                                  ? null
-                                  : () => _editField(
-                                      title: 'Email',
-                                      controller: _emailCtrl,
-                                      keyboardType: TextInputType.emailAddress,
-                                    ),
-                              icon: const Icon(Icons.alternate_email),
-                              label: Text(
-                                _emailCtrl.text.trim().isEmpty
-                                    ? 'Set email'
-                                    : _emailCtrl.text.trim(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                          FilledButton(
-                            onPressed: _requestBusy ? null : _requestReset,
-                            child: _requestBusy
-                                ? const SizedBox(
-                                    height: 18,
-                                    width: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Text('Send reset token'),
-                          ),
-                          if (_requestMessage != null) ...[
-                            const SizedBox(height: 8),
-                            Text(_requestMessage!),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
+    final titles = [
+      'Reset your password',
+      'Check your email',
+      'Choose a new password',
+    ];
+    final descriptions = [
+      'We’ll email you a 4-digit reset code.',
+      'If an account exists for ${_email.text.trim()}, a code has been sent.',
+      'Use at least 8 characters.',
+    ];
+    return AccountPage(
+      title: 'Reset password',
+      child: AutofillGroup(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Step ${_step + 1} of 3',
+                style: TextStyle(color: Theme.of(context).colorScheme.primary),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                titles[_step],
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              Text(descriptions[_step]),
+              const SizedBox(height: 24),
+              if (_step == 0)
+                _field(
+                  'Email',
+                  _email,
+                  keyboard: TextInputType.emailAddress,
+                  autofill: const [AutofillHints.email],
+                  validator: _emailError,
                 ),
-                const SizedBox(height: 12),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Form(
-                      key: _resetFormKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text(
-                            'Step 2: Set new password',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          if (!directionalNavigation)
-                            TextFormField(
-                              controller: _tokenCtrl,
-                              decoration: const InputDecoration(
-                                labelText: '4-digit reset code',
-                                prefixIcon: Icon(Icons.key_outlined),
-                              ),
-                              keyboardType: TextInputType.number,
-                              validator: (value) {
-                                final v = (value ?? '').trim();
-                                final is4Digits = RegExp(
-                                  r'^\d{4}$',
-                                ).hasMatch(v);
-                                if (!is4Digits) {
-                                  return 'Enter the 4-digit code';
-                                }
-                                return null;
-                              },
-                            )
-                          else
-                            OutlinedButton.icon(
-                              onPressed: _resetBusy
-                                  ? null
-                                  : () => _editField(
-                                      title: '4-digit reset code',
-                                      controller: _tokenCtrl,
-                                      keyboardType: TextInputType.number,
-                                    ),
-                              icon: const Icon(Icons.key_outlined),
-                              label: Text(
-                                _tokenCtrl.text.trim().isEmpty
-                                    ? 'Enter reset code'
-                                    : _tokenCtrl.text.trim(),
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                          if (!directionalNavigation)
-                            TextFormField(
-                              controller: _newPasswordCtrl,
-                              decoration: const InputDecoration(
-                                labelText: 'New password',
-                                prefixIcon: Icon(Icons.lock_outline),
-                              ),
-                              obscureText: true,
-                              validator: (value) {
-                                final v = value ?? '';
-                                if (v.isEmpty) {
-                                  return 'Required';
-                                }
-                                if (v.length < 8) {
-                                  return 'At least 8 characters';
-                                }
-                                return null;
-                              },
-                            )
-                          else
-                            OutlinedButton.icon(
-                              onPressed: _resetBusy
-                                  ? null
-                                  : () => _editField(
-                                      title: 'New password',
-                                      controller: _newPasswordCtrl,
-                                      obscure: true,
-                                    ),
-                              icon: const Icon(Icons.lock_outline),
-                              label: Text(
-                                _newPasswordCtrl.text.isEmpty
-                                    ? 'Set new password'
-                                    : 'Password set',
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                          if (!directionalNavigation)
-                            TextFormField(
-                              controller: _confirmCtrl,
-                              decoration: const InputDecoration(
-                                labelText: 'Confirm new password',
-                                prefixIcon: Icon(Icons.verified_user_outlined),
-                              ),
-                              obscureText: true,
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Required';
-                                }
-                                if (value != _newPasswordCtrl.text) {
-                                  return 'Passwords do not match';
-                                }
-                                return null;
-                              },
-                            )
-                          else
-                            OutlinedButton.icon(
-                              onPressed: _resetBusy
-                                  ? null
-                                  : () => _editField(
-                                      title: 'Confirm new password',
-                                      controller: _confirmCtrl,
-                                      obscure: true,
-                                    ),
-                              icon: const Icon(Icons.verified_user_outlined),
-                              label: Text(
-                                _confirmCtrl.text.isEmpty
-                                    ? 'Confirm new password'
-                                    : 'Confirmation set',
-                              ),
-                            ),
-                          if (_resetError != null) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              _resetError!,
-                              style: const TextStyle(color: Colors.redAccent),
-                            ),
-                          ],
-                          const SizedBox(height: 12),
-                          FilledButton(
-                            onPressed: _resetBusy ? null : _submitNewPassword,
-                            child: _resetBusy
-                                ? const SizedBox(
-                                    height: 18,
-                                    width: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Text('Update password'),
-                          ),
-                        ],
-                      ),
+              if (_step == 1)
+                _field(
+                  '4-digit reset code',
+                  _code,
+                  keyboard: TextInputType.number,
+                  autofill: const [AutofillHints.oneTimeCode],
+                  validator: (v) =>
+                      RegExp(r'^\d{4}$').hasMatch((v ?? '').trim())
+                      ? null
+                      : 'Enter the 4-digit code',
+                ),
+              if (_step == 2) ...[
+                _field(
+                  'New password',
+                  _password,
+                  password: true,
+                  autofill: const [AutofillHints.newPassword],
+                  validator: (v) =>
+                      (v ?? '').length < 8 ? 'At least 8 characters' : null,
+                ),
+                const SizedBox(height: 14),
+                _field(
+                  'Confirm new password',
+                  _confirm,
+                  password: true,
+                  autofill: const [AutofillHints.newPassword],
+                  validator: (v) =>
+                      v != _password.text ? 'Passwords do not match' : null,
+                ),
+              ],
+              if (_error != null) ...[
+                const SizedBox(height: 16),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
                     ),
                   ),
                 ),
               ],
-            ),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: _busy
+                    ? null
+                    : [_requestCode, _verifyCode, _updatePassword][_step],
+                child: _busy
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(
+                        [
+                          'Send reset code',
+                          'Verify code',
+                          'Update password',
+                        ][_step],
+                      ),
+              ),
+              if (_step == 1) ...[
+                TextButton(
+                  onPressed: _busy ? null : _requestCode,
+                  child: const Text('Resend code'),
+                ),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() {
+                          _step = 0;
+                          _error = null;
+                          _code.clear();
+                        }),
+                  child: const Text('Change email'),
+                ),
+              ],
+              if (_step == 2)
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() {
+                          _step = 1;
+                          _error = null;
+                          _code.clear();
+                        }),
+                  child: const Text('Use another code'),
+                ),
+            ],
           ),
         ),
       ),

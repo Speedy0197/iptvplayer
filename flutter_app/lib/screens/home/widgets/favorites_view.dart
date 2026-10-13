@@ -12,137 +12,150 @@ import 'player_pane.dart';
 
 class FavoritesView extends StatelessWidget {
   final PlaylistStore store;
+  final GlobalKey? playerKey;
   final GroupTapCallback onGroupTap;
   final ChannelTapCallback onChannelTap;
   final bool compact;
   final bool withPlayer;
   final FocusNode? initialFocusNode;
+  final VoidCallback? onBrowse;
 
   const FavoritesView({
     super.key,
     required this.store,
+    this.playerKey,
     required this.onGroupTap,
     required this.onChannelTap,
     this.compact = false,
     this.withPlayer = true,
     this.initialFocusNode,
+    this.onBrowse,
   });
 
   String _playlistNameFor(int playlistId) {
     for (final p in store.playlists) {
       if (p.id == playlistId) return p.name;
     }
-    return 'Playlist $playlistId';
+    return 'Source $playlistId';
   }
 
   @override
   Widget build(BuildContext context) {
-    final compactFullscreen = compact && !withPlayer;
     final isTv = isAndroidTv(context);
-
-    final favoriteLists = Column(
-      children: [
-        if (!isTv)
-          const ListTile(
-            dense: true,
-            leading: Icon(Icons.folder_open),
-            title: Text('Favorite Groups'),
-          ),
-        Expanded(
-          child: store.loadingFavoriteGroups
-              ? const Center(child: CircularProgressIndicator())
-              : store.favoriteGroups.isEmpty
-              ? const Center(child: Text('No favorite groups yet'))
-              : ListView.builder(
-                  itemCount: store.favoriteGroups.length,
-                  itemBuilder: (context, i) {
-                    final g = store.favoriteGroups[i];
-                    return _FavoriteGroupTile(
-                      group: g,
-                      store: store,
-                      playlistName: _playlistNameFor(g.playlistId),
-                      onTap: onGroupTap,
-                      isTv: isTv,
-                      autofocus: isTv && i == 0 && initialFocusNode == null,
-                      focusNode: i == 0 ? initialFocusNode : null,
-                    );
-                  },
-                ),
-        ),
-        const Divider(height: 1),
-        if (!isTv)
-          const ListTile(
-            dense: true,
-            leading: Icon(Icons.tv),
-            title: Text('Favorite Channels'),
-          ),
-        Expanded(
-          child: store.loadingFavoriteChannels
-              ? const Center(child: CircularProgressIndicator())
-              : store.favoriteChannels.isEmpty
-              ? const Center(child: Text('No favorite channels yet'))
-              : ListView.builder(
-                  itemCount: store.favoriteChannels.length,
-                  itemBuilder: (context, i) {
-                    final c = store.favoriteChannels[i];
-                    return _FavoriteChannelTile(
-                      channel: c,
-                      store: store,
-                      onTap: onChannelTap,
-                      isTv: isTv,
-                      autofocus: false,
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-
-    final favoritesCard = Card(
-      child: Column(
-        mainAxisSize: compactFullscreen
-            ? MainAxisSize.max
-            : (compact ? MainAxisSize.min : MainAxisSize.max),
-        children: [
-          ListTile(
-            title: const Text('Favorites'),
-            subtitle: const Text('Channels and groups'),
-            trailing: IconButton(
-              onPressed: () {
-                store.fetchFavoriteGroups();
-                store.fetchFavoriteChannels();
-              },
-              icon: const Icon(Icons.refresh),
+    final card = Card(
+      child: CustomScrollView(
+        key: const PageStorageKey('favorite-list'),
+        slivers: [
+          SliverToBoxAdapter(
+            child: ListTile(
+              title: const Text('Favorites'),
+              subtitle: const Text('Your channels and groups, across sources'),
+              trailing: IconButton(
+                tooltip: 'Refresh favorites',
+                onPressed: () {
+                  store.fetchFavoriteGroups();
+                  store.fetchFavoriteChannels();
+                },
+                icon: const Icon(Icons.refresh),
+              ),
             ),
           ),
-          if (!compact || compactFullscreen)
-            Expanded(child: favoriteLists)
-          else
-            SizedBox(height: 520, child: favoriteLists),
+          if (store.loadingFavoriteGroups)
+            const SliverToBoxAdapter(child: LinearProgressIndicator()),
+          if (store.favoriteGroups.isNotEmpty) ...[
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('Saved groups'),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: store.favoriteGroups
+                      .map(
+                        (g) => InputChip(
+                          avatar: const Icon(Icons.folder_outlined, size: 18),
+                          label: Text('${g.name} · ${g.channelCount}'),
+                          tooltip: _playlistNameFor(g.playlistId),
+                          onPressed: () => onGroupTap(g),
+                          onDeleted: () => store.toggleFavoriteGroup(g),
+                          deleteIcon: const Icon(
+                            Icons.star,
+                            color: Colors.amber,
+                            size: 18,
+                          ),
+                          deleteButtonTooltipMessage: 'Remove saved group',
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ),
+          ],
+          const SliverToBoxAdapter(
+            child: ListTile(
+              leading: Icon(Icons.tv),
+              title: Text('Saved channels'),
+            ),
+          ),
+          if (store.loadingFavoriteChannels)
+            const SliverToBoxAdapter(child: LinearProgressIndicator()),
+          SliverList.builder(
+            itemCount: store.favoriteChannels.length,
+            itemBuilder: (context, i) => _FavoriteChannelTile(
+              channel: store.favoriteChannels[i],
+              store: store,
+              onTap: onChannelTap,
+              isTv: isTv,
+              autofocus: i == 0 && initialFocusNode == null,
+              focusNode: i == 0 ? initialFocusNode : null,
+            ),
+          ),
+          if (store.favoriteChannels.isEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const Icon(Icons.star_outline, size: 36),
+                    const SizedBox(height: 12),
+                    const Text('Keep your favorites close'),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Use the star beside a channel to save it here.',
+                      textAlign: TextAlign.center,
+                    ),
+                    if (onBrowse != null)
+                      TextButton.icon(
+                        onPressed: onBrowse,
+                        icon: const Icon(Icons.tv),
+                        label: const Text('Browse channels'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
-
-    if (compact) {
-      if (!withPlayer) {
-        return favoritesCard;
-      }
-      return ListView(
-        padding: EdgeInsets.zero,
+    if (compact || !withPlayer) return card;
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
         children: [
-          favoritesCard,
-          const SizedBox(height: 10),
-          SizedBox(height: 420, child: PlayerPane(store: store)),
+          SizedBox(
+            width: (constraints.maxWidth * .42).clamp(300.0, 440.0),
+            child: card,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: PlayerPane(store: store, playerKey: playerKey),
+          ),
         ],
-      );
-    }
-
-    return Row(
-      children: [
-        SizedBox(width: 480, child: favoritesCard),
-        const SizedBox(width: 10),
-        Expanded(child: PlayerPane(store: store)),
-      ],
+      ),
     );
   }
 }
@@ -173,6 +186,7 @@ class _FavoriteGroupTile extends StatelessWidget {
     final showDesktopTooltips = isMacOrWindowsDesktop();
 
     Widget trailing = IconButton(
+      tooltip: 'Remove favorite',
       onPressed: () async {
         try {
           await store.toggleFavoriteGroup(group);
@@ -201,16 +215,16 @@ class _FavoriteGroupTile extends StatelessWidget {
               message: group.name,
               child: Text(
                 group.name,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             )
-          : Text(group.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          : Text(group.name, maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: isTv
           ? null
           : Text(
               '$playlistName • ${group.channelCount} channels',
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
       trailing: trailing,
@@ -257,9 +271,17 @@ class _FavoriteChannelTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = channel;
     final selected = store.nowPlaying?.id == c.id;
+    final sourceName =
+        store.playlists.where((p) => p.id == c.playlistId).firstOrNull?.name ??
+        'Source ${c.playlistId}';
+    final subtitle = [
+      sourceName,
+      if (c.groupName.trim().isNotEmpty) c.groupName,
+    ].join(' · ');
     final showDesktopTooltips = isMacOrWindowsDesktop();
 
     Widget trailing = IconButton(
+      tooltip: 'Remove favorite',
       onPressed: () async {
         try {
           await store.toggleFavorite(c);
@@ -289,25 +311,21 @@ class _FavoriteChannelTile extends StatelessWidget {
       title: showDesktopTooltips
           ? Tooltip(
               message: c.name,
-              child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              child: Text(c.name, maxLines: 2, overflow: TextOverflow.ellipsis),
             )
-          : Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          : Text(c.name, maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: isTv
           ? null
           : (showDesktopTooltips
                 ? Tooltip(
-                    message: c.groupName,
+                    message: subtitle,
                     child: Text(
-                      c.groupName,
-                      maxLines: 1,
+                      subtitle,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                   )
-                : Text(
-                    c.groupName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  )),
+                : Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis)),
       trailing: trailing,
       onTap: isTv ? null : _play,
     );
@@ -347,7 +365,7 @@ class FavoriteGroupsList extends StatelessWidget {
       for (final p in store.playlists) {
         if (p.id == playlistId) return p.name;
       }
-      return 'Playlist $playlistId';
+      return 'Source $playlistId';
     }
 
     final isTv = isAndroidTv(context);

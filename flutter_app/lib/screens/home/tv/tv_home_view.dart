@@ -292,6 +292,9 @@ class TvHomeViewState extends State<TvHomeView> {
             ? store.loadingFavoriteChannels
             : store.loadingChannels;
         final channels = loading ? const <Channel>[] : _channels;
+        final textScaler = MediaQuery.textScalerOf(context);
+        final channelExtent =
+            (textScaler.scale(20) + textScaler.scale(14)) * 1.5 + 12;
         final menu = <String, String>{
           'live': 'Live TV',
           'favorites': 'Favorites',
@@ -435,6 +438,9 @@ class TvHomeViewState extends State<TvHomeView> {
                                   child: _column(
                                     _favorites ? 'FAVORITES' : 'CHANNELS',
                                     TvRemoteList<Channel>(
+                                      itemExtent: channelExtent < 72
+                                          ? 72
+                                          : channelExtent,
                                       focusNode: _channelsFocus,
                                       autofocus: true,
                                       items: channels,

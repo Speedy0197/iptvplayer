@@ -42,7 +42,7 @@ func main() {
 	handlers.TVLoginTTL = parseEnvDurationMinutes(tvLoginTTLMinutes, 10*time.Minute)
 
 	r := chi.NewRouter()
-	r.Use(chimiddleware.Logger)
+	// Request URLs contain polling/account secrets; do not log them.
 	r.Use(chimiddleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
@@ -51,15 +51,17 @@ func main() {
 		AllowCredentials: false,
 	}))
 
+	// Verified signing certificate from the distributed GitHub release APK.
+	handlers.AndroidAppSHA256 = getEnv("ANDROID_APP_SHA256", "B0:07:BE:2E:17:C7:48:75:08:78:D5:76:D6:76:D6:E8:CD:CA:13:D1:ED:A1:FF:AC:41:CA:03:49:FD:F0:59:7D")
+	handlers.TVWebRoutes(r)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public
 		r.Post("/auth/register", handlers.Register)
 		r.Post("/auth/verify-email", handlers.VerifyEmail)
 		r.Post("/auth/resend-verification", handlers.ResendVerification)
 		r.Post("/auth/login", handlers.Login)
-		r.Post("/auth/tv/start", handlers.StartTVLogin)
-		r.Get("/auth/tv/poll", handlers.PollTVLogin)
-		r.Post("/auth/tv/approve", handlers.ApproveTVLogin)
+		handlers.TVRoutes(r)
 		r.Post("/auth/request-reset", handlers.RequestPasswordReset)
 		r.Post("/auth/verify-reset", handlers.VerifyResetToken)
 		r.Post("/auth/reset-password", handlers.ResetPassword)

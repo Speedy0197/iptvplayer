@@ -1,3 +1,4 @@
+import '../widgets/programme_presentation.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -136,6 +137,10 @@ class _TvProgrammePanelState extends State<TvProgrammePanel> {
                                 ? 'No description available.'
                                 : entry.description,
                           ),
+                          if (scheduled) ...[
+                            const SizedBox(height: 12),
+                            const Text('Recording scheduled on receiver'),
+                          ],
                           if (canRecord && snapshot.hasError) ...[
                             const SizedBox(height: 16),
                             const Text(
@@ -165,12 +170,20 @@ class _TvProgrammePanelState extends State<TvProgrammePanel> {
                               : !snapshot.hasData
                               ? 'Loading timers…'
                               : scheduled
-                              ? 'Remove timer'
+                              ? 'Cancel recording'
                               : 'Record',
                         ),
                         onPressed: saving || !snapshot.hasData
                             ? null
                             : () async {
+                                if (scheduled &&
+                                    !await confirmRecordingCancellation(
+                                      ctx,
+                                      entry.title,
+                                    )) {
+                                  return;
+                                }
+                                if (!ctx.mounted) return;
                                 update(() => saving = true);
                                 try {
                                   if (scheduled) {
@@ -232,6 +245,12 @@ class _TvProgrammePanelState extends State<TvProgrammePanel> {
   @override
   Widget build(BuildContext context) {
     final playing = widget.store.nowPlaying;
+    final textScaler = MediaQuery.textScalerOf(context);
+    final programmeExtent =
+        textScaler.scale(17) * 1.5 * 2 +
+        textScaler.scale(13) * 1.5 * 2 +
+        textScaler.scale(12) * 1.5 +
+        24;
     return LayoutBuilder(
       builder: (context, constraints) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,14 +278,16 @@ class _TvProgrammePanelState extends State<TvProgrammePanel> {
           ),
           const SizedBox(height: 14),
           Text(
-            widget.channel?.name ?? 'Choose a channel',
+            widget.channel == null
+                ? 'Choose a channel'
+                : 'GUIDE FOR · ${widget.channel!.name}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
           const Text(
-            'PROGRAMME GUIDE · OK for details',
+            'Programme guide · OK for details',
             style: TextStyle(fontSize: 12, color: Color(0xff9cadc1)),
           ),
           const SizedBox(height: 4),
@@ -278,7 +299,7 @@ class _TvProgrammePanelState extends State<TvProgrammePanel> {
               selectedId: _selectedEntry,
               memoryKey:
                   'epg:${widget.channel?.playlistId}:${widget.channel?.id}',
-              itemExtent: 74,
+              itemExtent: programmeExtent < 100 ? 100 : programmeExtent,
               onFocused: (entry) => _selectedEntry = _entryId(entry),
               onActivate: (entry) => unawaited(_showEntry(entry)),
               onLeft: widget.onReturn,
@@ -302,7 +323,11 @@ class _TvProgrammePanelState extends State<TvProgrammePanel> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      '${_time(entry.startTime)} – ${_time(entry.endTime)}',
+                      '${isProgrammeOnNow(entry, DateTime.now())
+                          ? 'On now · '
+                          : _entries.indexOf(entry) == (_entries.any((e) => isProgrammeOnNow(e, DateTime.now())) ? 1 : 0)
+                          ? 'Up next · '
+                          : ''}${_time(entry.startTime)} – ${_time(entry.endTime)}',
                       style: TextStyle(
                         fontSize: 13,
                         color: focused
@@ -314,8 +339,30 @@ class _TvProgrammePanelState extends State<TvProgrammePanel> {
                       entry.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 17),
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
+                    if (isProgrammeOnNow(entry, DateTime.now())) ...[
+                      const SizedBox(height: 4),
+                      LinearProgressIndicator(
+                        value: programmeProgress(entry, DateTime.now()),
+                        minHeight: 3,
+                        color: focused
+                            ? const Color(0xff43566c)
+                            : const Color(0xff39b78d),
+                      ),
+                      Text(
+                        programmeRemaining(entry, DateTime.now()),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: focused
+                              ? const Color(0xff43566c)
+                              : const Color(0xff9cadc1),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

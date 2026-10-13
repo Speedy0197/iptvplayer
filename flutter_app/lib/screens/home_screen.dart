@@ -15,7 +15,8 @@ import 'home/dialogs/confirm_dialog.dart';
 import 'home/dialogs/playlist_dialog.dart';
 import 'home/home_types.dart';
 import 'home/widgets/channels_pane.dart';
-import 'home/widgets/compact_bottom_nav_icon.dart';
+import 'home/widgets/browse_controls.dart';
+import 'account_screen.dart';
 import 'home/widgets/compact_favorites_section.dart';
 import 'home/widgets/compact_mini_player_bar.dart';
 import 'home/widgets/compact_watch_section.dart';
@@ -51,9 +52,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _compactFavoritesView = 0;
   late final PageController _compactWatchController;
   late final PageController _compactFavoritesController;
+  bool _groupsExpanded = true;
   bool _searchDialogOpen = false;
   bool _searchDialogPending = false;
   final _tvHomeKey = GlobalKey<TvHomeViewState>();
+  final _playerKey = GlobalKey(debugLabel: 'persistentChannelPlayer');
   int _tvFullscreenRequest = 0;
 
   @override
@@ -117,89 +120,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _openCompactPlayer(PlaylistStore store) async {
     if (!mounted) return;
-
-    final isSmallCompact =
-        MediaQuery.sizeOf(context).width < kCompactBreakpoint;
-    final favoritesPlayerPage = isSmallCompact ? 2 : 1;
-
-    if (_section == HomeSection.favorites) {
-      setState(() => _compactFavoritesView = favoritesPlayerPage);
-      if (_compactFavoritesController.hasClients) {
-        await _compactFavoritesController.animateToPage(
-          favoritesPlayerPage,
-          duration: kTabAnimation,
-          curve: Curves.easeOut,
-        );
-      }
-      return;
-    }
-
-    if (_section != HomeSection.watch) {
-      setState(() {
+    setState(() {
+      if (_section == HomeSection.favorites) {
+        _compactFavoritesView = 1;
+      } else {
         _section = HomeSection.watch;
         _compactWatchView = CompactWatchSection.viewPlayer;
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_compactWatchController.hasClients) return;
-        _compactWatchController.animateToPage(
-          CompactWatchSection.viewPlayer,
-          duration: kTabAnimation,
-          curve: Curves.easeOut,
-        );
-      });
-      return;
-    }
-
-    setState(() => _compactWatchView = CompactWatchSection.viewPlayer);
-    if (_compactWatchController.hasClients) {
-      await _compactWatchController.animateToPage(
-        CompactWatchSection.viewPlayer,
-        duration: kTabAnimation,
-        curve: Curves.easeOut,
-      );
-    }
+      }
+    });
   }
 
   Future<void> _goToCompactWatchPage(int page) async {
-    if (!mounted) return;
-    if (_compactWatchView != page) {
-      setState(() => _compactWatchView = page);
-    }
-    // Wait for any pending rebuild/layout (e.g. from a store update fired in
-    // the same gesture) to settle, otherwise animateToPage can be called
-    // against a PageView with stale dimensions and silently no-op.
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
-    if (_compactWatchController.hasClients) {
-      final fromPage = _compactWatchController.page?.round() ?? page;
-      if ((page - fromPage).abs() > 1) {
-        // Jump straight there for multi-page hops (e.g. Playlists <-> Channels)
-        // so the page(s) in between never get built/painted, even briefly.
-        _compactWatchController.jumpToPage(page);
-      } else {
-        await _compactWatchController.animateToPage(
-          page,
-          duration: kTabAnimation,
-          curve: Curves.easeOut,
-        );
-      }
-    }
-  }
-
-  Future<void> _requestLogoutConfirmation() async {
-    final shouldLogout = await showConfirmDialog(
-      context,
-      title: 'Logout',
-      message: 'Are you sure you want to log out?',
-      confirmLabel: 'Logout',
-      confirmIcon: Icons.logout,
-    );
-
-    if (shouldLogout == true && mounted) {
-      final auth = context.read<AuthStore>();
-      context.read<PlaylistStore>().stopPlayback();
-      await auth.logout();
-    }
+    if (mounted) setState(() => _compactWatchView = page);
   }
 
   void _cleanupSearch() {
@@ -255,20 +187,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             : store.selectedPlaylistId;
         if (groupPlaylistId != null) {
           if (store.selectedPlaylistId != groupPlaylistId) {
-            await store.selectPlaylist(groupPlaylistId, preservePlayback: isTv);
+            await store.selectPlaylist(groupPlaylistId, preservePlayback: true);
           }
-          await store.selectGroup(g.name, preservePlayback: isTv);
+          await store.selectGroup(g.name, preservePlayback: true);
         }
       } else {
         final c = item.channel!;
         if (store.selectedPlaylistId != c.playlistId) {
-          await store.selectPlaylist(c.playlistId, preservePlayback: isTv);
+          await store.selectPlaylist(c.playlistId, preservePlayback: true);
         }
 
         final channelGroup = c.groupName.trim();
         await store.selectGroup(
           channelGroup.isEmpty ? null : channelGroup,
-          preservePlayback: isTv,
+          preservePlayback: true,
         );
         if (!isTv) await store.play(c);
       }
@@ -278,7 +210,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _tvHomeKey.currentState?.reveal(channel: item.channel);
           if (item.channel != null) await _playTvChannel(item.channel!);
         } else if (isCompact) {
-          await _goToCompactWatchPage(CompactWatchSection.viewChannels);
+          await _goToCompactWatchPage(
+            item.type == SearchResultType.channel
+                ? CompactWatchSection.viewPlayer
+                : CompactWatchSection.viewChannels,
+          );
         }
       }
     } catch (e) {
@@ -307,9 +243,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       if (store.selectedPlaylistId != targetPlaylistId) {
-        await store.selectPlaylist(targetPlaylistId);
+        await store.selectPlaylist(targetPlaylistId, preservePlayback: true);
       }
-      await store.selectGroup(normalizedGroup.name);
+      await store.selectGroup(normalizedGroup.name, preservePlayback: true);
 
       if (!mounted) return;
 
@@ -350,49 +286,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final messenger = ScaffoldMessenger.of(context);
-    final progressBar = messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(minutes: 1),
-        content: Row(
-          children: [
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 12),
-            Expanded(child: Text('Updating "${playlist.name}"...')),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final pulledCount = await store.refreshPlaylist(playlist.id);
-      if (!mounted) return;
-      progressBar.close();
-
-      final message = pulledCount == null
-          ? 'Playlist "${playlist.name}" updated.'
-          : 'Playlist "${playlist.name}" updated: $pulledCount channels pulled.';
-      messenger.showSnackBar(SnackBar(content: Text(message)));
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      progressBar.close();
-      messenger.showSnackBar(
-        SnackBar(content: Text('Update failed: ${e.message}')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      progressBar.close();
-      messenger.showSnackBar(SnackBar(content: Text('Update failed: $e')));
-    }
+    await store.refreshPlaylist(playlist.id);
   }
 
   Future<void> _showSearchDialog() async {
     if (!mounted || _searchDialogOpen) return;
     var initialized = false;
+    var searchType = 'all';
+    int? searchSource;
     _firstSearchResultFocusNode.unfocus();
 
     void reopenKeyboard() {
@@ -422,302 +323,411 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       await showDialog<void>(
         context: context,
-        builder: (ctx) {
-          final tvMode = isAndroidTv(ctx);
-          final showDesktopTooltips = isMacOrWindowsDesktop();
-          if (!initialized) {
-            initialized = true;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted || !_searchDialogOpen) return;
-              _searchFieldFocusNode.requestFocus();
-              if (tvMode) {
-                reopenKeyboard();
-              }
-            });
-          }
-
-          void focusFirstSearchResult() {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted || !_searchDialogOpen) return;
-              if (_firstSearchResultFocusNode.context != null) {
-                _firstSearchResultFocusNode.requestFocus();
-              }
-            });
-          }
-
-          return PopScope(
-            canPop: false,
-            onPopInvokedWithResult: (didPop, result) {
-              if (didPop) return;
-              _searchFieldFocusNode.unfocus();
-              SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
-              if (ctx.mounted) {
-                Navigator.of(ctx).pop();
-              }
-            },
-            child: Focus(
-              autofocus: true,
-              onKeyEvent: (node, event) {
-                if (event is! KeyDownEvent) {
-                  return KeyEventResult.ignored;
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final tvMode = isAndroidTv(ctx);
+            final showDesktopTooltips = isMacOrWindowsDesktop();
+            if (!initialized) {
+              initialized = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted || !_searchDialogOpen) return;
+                _searchFieldFocusNode.requestFocus();
+                if (tvMode) {
+                  reopenKeyboard();
                 }
+              });
+            }
 
-                final key = event.logicalKey;
-                final isBack =
-                    key == LogicalKeyboardKey.goBack ||
-                    key == LogicalKeyboardKey.escape;
-                final isArrowDown = key == LogicalKeyboardKey.arrowDown;
-                final isArrowUp = key == LogicalKeyboardKey.arrowUp;
-                final isSelect =
-                    key == LogicalKeyboardKey.select ||
-                    key == LogicalKeyboardKey.gameButtonA;
-
-                // Back from text field or active search bar
-                final searchAreaHasFocus =
-                    _searchFieldFocusNode.hasFocus ||
-                    _searchBarActiveFocusNode.hasFocus;
-                if (searchAreaHasFocus && isBack) {
-                  _searchFieldFocusNode.unfocus();
-                  _searchBarActiveFocusNode.unfocus();
-                  SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
-                  return KeyEventResult.handled;
+            void focusFirstSearchResult() {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted || !_searchDialogOpen) return;
+                if (_firstSearchResultFocusNode.context != null) {
+                  _firstSearchResultFocusNode.requestFocus();
                 }
+              });
+            }
 
-                // OK/Select on non-text search bar node reopens keyboard
-                if (tvMode &&
-                    _searchBarActiveFocusNode.hasPrimaryFocus &&
-                    isSelect) {
-                  _searchFieldFocusNode.requestFocus();
-                  SystemChannels.textInput.invokeMethod<void>('TextInput.show');
-                  return KeyEventResult.handled;
+            return PopScope(
+              canPop: false,
+              onPopInvokedWithResult: (didPop, result) {
+                if (didPop) return;
+                _searchFieldFocusNode.unfocus();
+                SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+                if (ctx.mounted) {
+                  Navigator.of(ctx).pop();
                 }
-
-                // Down arrow: from text field or active search bar → first result
-                if (tvMode && searchAreaHasFocus && isArrowDown) {
-                  _searchFieldFocusNode.unfocus();
-                  _searchBarActiveFocusNode.unfocus();
-                  SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
-                  focusFirstSearchResult();
-                  return KeyEventResult.handled;
-                }
-
-                if (tvMode &&
-                    _firstSearchResultFocusNode.hasPrimaryFocus &&
-                    isArrowUp) {
-                  // Return to non-text bar node (not text field) to avoid IME reopen
-                  _searchBarActiveFocusNode.requestFocus();
-                  return KeyEventResult.handled;
-                }
-
-                return KeyEventResult.ignored;
               },
-              child: Dialog(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: 760,
-                    maxHeight: 620,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        Focus(
-                          focusNode: _searchBarActiveFocusNode,
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: ValueListenableBuilder<TextEditingValue>(
-                                  valueListenable: _searchCtrl,
-                                  builder: (context, value, _) {
-                                    return TextFormField(
-                                      controller: _searchCtrl,
-                                      focusNode: _searchFieldFocusNode,
-                                      autofocus: true,
-                                      onTap: tvMode ? reopenKeyboard : null,
-                                      onEditingComplete: () =>
-                                          handleTvImeSubmit(tvMode),
-                                      onFieldSubmitted: (_) =>
-                                          handleTvImeSubmit(tvMode),
-                                      decoration: InputDecoration(
-                                        labelText: 'Search channels, groups',
-                                        prefixIcon: const Icon(Icons.search),
-                                        suffixIcon:
-                                            !tvMode && value.text.isNotEmpty
-                                            ? IconButton(
-                                                tooltip: 'Clear search',
-                                                onPressed: () {
-                                                  _searchCtrl.clear();
-                                                  context
-                                                      .read<PlaylistStore>()
-                                                      .setSearchQuery('');
-                                                },
-                                                icon: const Icon(Icons.clear),
-                                              )
-                                            : null,
+              child: Focus(
+                autofocus: true,
+                onKeyEvent: (node, event) {
+                  if (event is! KeyDownEvent) {
+                    return KeyEventResult.ignored;
+                  }
+
+                  final key = event.logicalKey;
+                  final isBack =
+                      key == LogicalKeyboardKey.goBack ||
+                      key == LogicalKeyboardKey.escape;
+                  final isArrowDown = key == LogicalKeyboardKey.arrowDown;
+                  final isArrowUp = key == LogicalKeyboardKey.arrowUp;
+                  final isSelect =
+                      key == LogicalKeyboardKey.select ||
+                      key == LogicalKeyboardKey.gameButtonA;
+
+                  // Back from text field or active search bar
+                  final searchAreaHasFocus =
+                      _searchFieldFocusNode.hasFocus ||
+                      _searchBarActiveFocusNode.hasFocus;
+                  if (searchAreaHasFocus && isBack) {
+                    _searchFieldFocusNode.unfocus();
+                    _searchBarActiveFocusNode.unfocus();
+                    SystemChannels.textInput.invokeMethod<void>(
+                      'TextInput.hide',
+                    );
+                    return KeyEventResult.handled;
+                  }
+
+                  // OK/Select on non-text search bar node reopens keyboard
+                  if (tvMode &&
+                      _searchBarActiveFocusNode.hasPrimaryFocus &&
+                      isSelect) {
+                    _searchFieldFocusNode.requestFocus();
+                    SystemChannels.textInput.invokeMethod<void>(
+                      'TextInput.show',
+                    );
+                    return KeyEventResult.handled;
+                  }
+
+                  // Down arrow: from text field or active search bar → first result
+                  if (tvMode && searchAreaHasFocus && isArrowDown) {
+                    _searchFieldFocusNode.unfocus();
+                    _searchBarActiveFocusNode.unfocus();
+                    SystemChannels.textInput.invokeMethod<void>(
+                      'TextInput.hide',
+                    );
+                    focusFirstSearchResult();
+                    return KeyEventResult.handled;
+                  }
+
+                  if (tvMode &&
+                      _firstSearchResultFocusNode.hasPrimaryFocus &&
+                      isArrowUp) {
+                    // Return to non-text bar node (not text field) to avoid IME reopen
+                    _searchBarActiveFocusNode.requestFocus();
+                    return KeyEventResult.handled;
+                  }
+
+                  return KeyEventResult.ignored;
+                },
+                child: Dialog(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: 760,
+                      maxHeight: 620,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          Focus(
+                            focusNode: _searchBarActiveFocusNode,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child:
+                                      ValueListenableBuilder<TextEditingValue>(
+                                        valueListenable: _searchCtrl,
+                                        builder: (context, value, _) {
+                                          return TextFormField(
+                                            controller: _searchCtrl,
+                                            focusNode: _searchFieldFocusNode,
+                                            autofocus: true,
+                                            onTap: tvMode
+                                                ? reopenKeyboard
+                                                : null,
+                                            onEditingComplete: () =>
+                                                handleTvImeSubmit(tvMode),
+                                            onFieldSubmitted: (_) =>
+                                                handleTvImeSubmit(tvMode),
+                                            decoration: InputDecoration(
+                                              labelText:
+                                                  'Search channels, groups',
+                                              prefixIcon: const Icon(
+                                                Icons.search,
+                                              ),
+                                              suffixIcon:
+                                                  !tvMode &&
+                                                      value.text.isNotEmpty
+                                                  ? IconButton(
+                                                      tooltip: 'Clear search',
+                                                      onPressed: () {
+                                                        _searchCtrl.clear();
+                                                        context
+                                                            .read<
+                                                              PlaylistStore
+                                                            >()
+                                                            .setSearchQuery('');
+                                                      },
+                                                      icon: const Icon(
+                                                        Icons.clear,
+                                                      ),
+                                                    )
+                                                  : null,
+                                            ),
+                                            onChanged: (searchValue) {
+                                              context
+                                                  .read<PlaylistStore>()
+                                                  .setSearchQuery(searchValue);
+                                            },
+                                          );
+                                        },
                                       ),
-                                      onChanged: (searchValue) {
-                                        context
-                                            .read<PlaylistStore>()
-                                            .setSearchQuery(searchValue);
-                                      },
-                                    );
+                                ),
+                                IconButton(
+                                  tooltip: 'Close search',
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    _cleanupSearch();
+                                    Navigator.of(ctx).pop();
                                   },
+                                ),
+                              ],
+                            ), // end Row
+                          ), // end Focus(searchBarActiveFocusNode)
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              ChoiceChip(
+                                label: const Text('All results'),
+                                selected: searchType == 'all',
+                                onSelected: (_) =>
+                                    setDialogState(() => searchType = 'all'),
+                              ),
+                              const SizedBox(width: 8),
+                              ChoiceChip(
+                                label: const Text('Channels only'),
+                                selected: searchType == 'channels',
+                                onSelected: (_) => setDialogState(
+                                  () => searchType = 'channels',
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ChoiceChip(
+                                label: const Text('Groups only'),
+                                selected: searchType == 'groups',
+                                onSelected: (_) =>
+                                    setDialogState(() => searchType = 'groups'),
+                              ),
+                              const SizedBox(width: 12),
+                              PopupMenuButton<int>(
+                                tooltip: 'Filter search by source',
+                                onSelected: (id) => setDialogState(
+                                  () => searchSource = id == -1 ? null : id,
+                                ),
+                                itemBuilder: (_) => [
+                                  const PopupMenuItem(
+                                    value: -1,
+                                    child: Text('All sources'),
+                                  ),
+                                  ...context
+                                      .read<PlaylistStore>()
+                                      .playlists
+                                      .map(
+                                        (p) => PopupMenuItem(
+                                          value: p.id,
+                                          child: Text(p.name),
+                                        ),
+                                      ),
+                                ],
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Text(
+                                    searchSource == null
+                                        ? 'All sources'
+                                        : context
+                                              .read<PlaylistStore>()
+                                              .playlists
+                                              .firstWhere(
+                                                (p) => p.id == searchSource,
+                                              )
+                                              .name,
+                                  ),
                                 ),
                               ),
                             ],
-                          ), // end Row
-                        ), // end Focus(searchBarActiveFocusNode)
-                        const SizedBox(height: 12),
-                        Expanded(
-                          child: Consumer<PlaylistStore>(
-                            builder: (context, store, _) {
-                              final groups = store.globalFilteredGroups;
-                              final channels = store.globalFilteredChannels;
+                          ),
+                          const SizedBox(height: 8),
+                          Expanded(
+                            child: Consumer<PlaylistStore>(
+                              builder: (context, store, _) {
+                                final groups = searchType == 'channels'
+                                    ? <Group>[]
+                                    : store.globalFilteredGroups
+                                          .where(
+                                            (g) =>
+                                                searchSource == null ||
+                                                g.playlistId == searchSource,
+                                          )
+                                          .toList();
+                                final channels = searchType == 'groups'
+                                    ? <Channel>[]
+                                    : store.globalFilteredChannels
+                                          .where(
+                                            (c) =>
+                                                searchSource == null ||
+                                                c.playlistId == searchSource,
+                                          )
+                                          .toList();
 
-                              if (!store.hasActiveSearch) {
-                                return const Center(
-                                  child: Text('Type to search'),
-                                );
-                              }
-
-                              if (store.loadingGlobalSearch) {
-                                return const Center(
-                                  child: CircularProgressIndicator(),
-                                );
-                              }
-
-                              if (groups.isEmpty && channels.isEmpty) {
-                                return const Center(
-                                  child: Text('No matches found'),
-                                );
-                              }
-
-                              final children = <Widget>[];
-
-                              void addSectionDivider() {
-                                if (children.isNotEmpty) {
-                                  children.add(const Divider(height: 20));
+                                if (!store.hasActiveSearch) {
+                                  return const Center(
+                                    child: Text('Type to search'),
+                                  );
                                 }
-                              }
 
-                              if (groups.isNotEmpty) {
-                                addSectionDivider();
-                                children.add(
-                                  Text(
-                                    'Groups',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleSmall,
-                                  ),
-                                );
-                                children.add(const SizedBox(height: 6));
-                                var firstResultAssigned = false;
-                                for (final g in groups) {
-                                  final isFirstResult =
-                                      tvMode && !firstResultAssigned;
-                                  if (isFirstResult) {
-                                    firstResultAssigned = true;
+                                if (store.loadingGlobalSearch) {
+                                  return const Center(
+                                    child: CircularProgressIndicator(),
+                                  );
+                                }
+
+                                if (groups.isEmpty && channels.isEmpty) {
+                                  return const Center(
+                                    child: Text('No matches found'),
+                                  );
+                                }
+
+                                final children = <Widget>[];
+
+                                void addSectionDivider() {
+                                  if (children.isNotEmpty) {
+                                    children.add(const Divider(height: 20));
                                   }
+                                }
 
+                                if (groups.isNotEmpty) {
+                                  addSectionDivider();
                                   children.add(
-                                    ListTile(
-                                      focusNode: isFirstResult
-                                          ? _firstSearchResultFocusNode
-                                          : null,
-                                      dense: true,
-                                      leading: const Icon(Icons.folder_open),
-                                      title: showDesktopTooltips
-                                          ? Tooltip(
-                                              message: g.name,
-                                              child: Text(
+                                    Text(
+                                      'Groups',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleSmall,
+                                    ),
+                                  );
+                                  children.add(const SizedBox(height: 6));
+                                  var firstResultAssigned = false;
+                                  for (final g in groups) {
+                                    final isFirstResult =
+                                        tvMode && !firstResultAssigned;
+                                    if (isFirstResult) {
+                                      firstResultAssigned = true;
+                                    }
+
+                                    children.add(
+                                      ListTile(
+                                        focusNode: isFirstResult
+                                            ? _firstSearchResultFocusNode
+                                            : null,
+                                        dense: true,
+                                        leading: const Icon(Icons.folder_open),
+                                        title: showDesktopTooltips
+                                            ? Tooltip(
+                                                message: g.name,
+                                                child: Text(
+                                                  g.name,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              )
+                                            : Text(
                                                 g.name,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
-                                            )
-                                          : Text(
-                                              g.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
+                                        subtitle: Text(
+                                          '${store.playlists.where((p) => p.id == g.playlistId).firstOrNull?.name ?? 'Source'} · ${g.channelCount} channels',
+                                        ),
+                                        onTap: () {
+                                          _searchFieldFocusNode.unfocus();
+                                          Navigator.of(ctx).pop();
+                                          Future.microtask(
+                                            () => _jumpToSearchResult(
+                                              SearchResultItem.group(g),
                                             ),
-                                      subtitle: Text(
-                                        '${g.channelCount} channels',
+                                          );
+                                        },
                                       ),
+                                    );
+                                  }
+                                }
+
+                                if (channels.isNotEmpty) {
+                                  addSectionDivider();
+                                  children.add(
+                                    Text(
+                                      'Channels',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleSmall,
+                                    ),
+                                  );
+                                  children.add(const SizedBox(height: 6));
+                                  var firstResultAssigned = groups.isNotEmpty;
+                                  for (final c in channels) {
+                                    final playlistName = store.playlists
+                                        .firstWhere(
+                                          (p) => p.id == c.playlistId,
+                                          orElse: () => Playlist(
+                                            id: c.playlistId,
+                                            name: 'Unknown',
+                                            type: 'm3u',
+                                          ),
+                                        )
+                                        .name;
+                                    final tile = SearchChannelResultTile(
+                                      key: ValueKey(c.id),
+                                      channel: c,
+                                      playlistName: playlistName,
+                                      focusNode: tvMode && !firstResultAssigned
+                                          ? _firstSearchResultFocusNode
+                                          : null,
                                       onTap: () {
                                         _searchFieldFocusNode.unfocus();
                                         Navigator.of(ctx).pop();
                                         Future.microtask(
                                           () => _jumpToSearchResult(
-                                            SearchResultItem.group(g),
+                                            SearchResultItem.channel(c),
                                           ),
                                         );
                                       },
-                                    ),
-                                  );
-                                }
-                              }
+                                    );
 
-                              if (channels.isNotEmpty) {
-                                addSectionDivider();
-                                children.add(
-                                  Text(
-                                    'Channels',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleSmall,
-                                  ),
-                                );
-                                children.add(const SizedBox(height: 6));
-                                var firstResultAssigned = groups.isNotEmpty;
-                                for (final c in channels) {
-                                  final playlistName = store.playlists
-                                      .firstWhere(
-                                        (p) => p.id == c.playlistId,
-                                        orElse: () => Playlist(
-                                          id: c.playlistId,
-                                          name: 'Unknown',
-                                          type: 'm3u',
-                                        ),
-                                      )
-                                      .name;
-                                  final tile = SearchChannelResultTile(
-                                    key: ValueKey(c.id),
-                                    channel: c,
-                                    playlistName: playlistName,
-                                    focusNode: tvMode && !firstResultAssigned
-                                        ? _firstSearchResultFocusNode
-                                        : null,
-                                    onTap: () {
-                                      _searchFieldFocusNode.unfocus();
-                                      Navigator.of(ctx).pop();
-                                      Future.microtask(
-                                        () => _jumpToSearchResult(
-                                          SearchResultItem.channel(c),
-                                        ),
-                                      );
-                                    },
-                                  );
+                                    if (tvMode && !firstResultAssigned) {
+                                      firstResultAssigned = true;
+                                    }
 
-                                  if (tvMode && !firstResultAssigned) {
-                                    firstResultAssigned = true;
+                                    children.add(tile);
                                   }
-
-                                  children.add(tile);
                                 }
-                              }
 
-                              return ListView(children: children);
-                            },
+                                return ListView(children: children);
+                              },
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       );
     } finally {
       _searchFieldFocusNode.unfocus();
@@ -732,7 +742,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('Delete playlist'),
+          title: const Text('Delete source'),
           content: Text('Delete "${p.name}" and all imported channels?'),
           actions: [
             TextButton(
@@ -765,115 +775,134 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _handleSectionChange(HomeSection next) {
-    // Unfocus the menu button first
     FocusManager.instance.primaryFocus?.unfocus();
-    final store = context.read<PlaylistStore>();
-
-    if (_section != next) {
-      store.stopPlayback();
-    }
-
-    setState(() {
-      _section = next;
-      if (next == HomeSection.watch) {
-        _compactWatchView = 0;
-      } else if (next == HomeSection.favorites) {
-        _compactFavoritesView = 0;
-      }
-    });
-    if (next == HomeSection.watch) {
-      store.fetchFavoriteGroups();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_compactWatchController.hasClients) return;
-        _compactWatchController.jumpToPage(CompactWatchSection.viewPlaylists);
-      });
-    }
+    setState(() => _section = next);
     if (next == HomeSection.favorites) {
-      store.fetchFavoriteChannels();
-      store.fetchFavoriteGroups();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_compactFavoritesController.hasClients) return;
-        _compactFavoritesController.jumpToPage(0);
-      });
+      context.read<PlaylistStore>().fetchFavoriteChannels();
+      context.read<PlaylistStore>().fetchFavoriteGroups();
     }
   }
 
   Widget _buildSection(BuildContext context, PlaylistStore store) {
     final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
-    final isTv = isAndroidTv(context);
-
     switch (_section) {
       case HomeSection.watch:
-        // Use compact layout for mobile, tablets, and TV (space-efficient with tabs/pagination)
-        if (isCompact || isTv) {
+        if (!store.loadingPlaylists && store.playlists.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.live_tv, size: 48),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Add a source to start watching',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: () =>
+                        _handleSectionChange(HomeSection.playlists),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add source'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        if (isCompact) {
           return CompactWatchSection(
             store: store,
+            playerKey: _playerKey,
             controller: _compactWatchController,
             currentPage: _compactWatchView,
             onGoToPage: _goToCompactWatchPage,
-            onPageChanged: (index) {
-              if (_compactWatchView != index) {
-                setState(() => _compactWatchView = index);
-              }
-            },
+            onPageChanged: (index) => setState(() => _compactWatchView = index),
             initialFocusNode: _watchSectionFocusNode,
           );
         }
-        final playlistsWidth = 280.0;
-        final channelsWidth = 280.0;
-        return Row(
-          children: [
-            SizedBox(
-              width: playlistsWidth,
-              child: WatchPlaylistsPane(
-                store: store,
-                initialItemFocusNode: _watchSectionFocusNode,
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: channelsWidth,
-              child: ChannelsPane(
-                store: store,
-                initialChannelFocusNode: _watchSectionFocusNode,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: PlayerPane(store: store)),
-          ],
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final groupWidth = constraints.maxWidth > 1100 ? 200.0 : 170.0;
+            final channelWidth = (constraints.maxWidth * .27).clamp(
+              230.0,
+              300.0,
+            );
+            return Row(
+              children: [
+                if (_groupsExpanded)
+                  SizedBox(
+                    width: groupWidth,
+                    child: WatchPlaylistsPane(
+                      key: const PageStorageKey('watch-groups'),
+                      store: store,
+                      mode: WatchBrowseMode.groupsOnly,
+                      initialItemFocusNode: _watchSectionFocusNode,
+                    ),
+                  ),
+                if (_groupsExpanded) const SizedBox(width: 8),
+                SizedBox(
+                  width: channelWidth,
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          IconButton(
+                            tooltip: _groupsExpanded
+                                ? 'Hide groups'
+                                : 'Show groups',
+                            onPressed: () => setState(
+                              () => _groupsExpanded = !_groupsExpanded,
+                            ),
+                            icon: const Icon(Icons.view_sidebar_outlined),
+                          ),
+                          Expanded(child: GroupSelector(store: store)),
+                        ],
+                      ),
+                      Expanded(
+                        child: ChannelsPane(
+                          key: const PageStorageKey('desktop-watch-channels'),
+                          store: store,
+                          initialChannelFocusNode: _watchSectionFocusNode,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: PlayerPane(store: store, playerKey: _playerKey),
+                ),
+              ],
+            );
+          },
         );
       case HomeSection.favorites:
-        // Use compact layout for mobile, tablets, and TV (space-efficient with tabs/pagination)
-        if (isCompact || isTv) {
+        if (isCompact) {
           return CompactFavoritesSection(
             store: store,
+            playerKey: _playerKey,
             controller: _compactFavoritesController,
             currentPage: _compactFavoritesView,
             onGroupTap: _openFavoriteGroup,
             onChannelTap: _openFavoriteChannel,
-            onPageChanged: (index) {
-              if (_compactFavoritesView != index) {
-                setState(() => _compactFavoritesView = index);
-              }
-            },
-            onGoToPage: (page) async {
-              setState(() => _compactFavoritesView = page);
-              if (_compactFavoritesController.hasClients) {
-                await _compactFavoritesController.animateToPage(
-                  page,
-                  duration: kTabAnimation,
-                  curve: Curves.easeOut,
-                );
-              }
-            },
+            onPageChanged: (index) =>
+                setState(() => _compactFavoritesView = index),
+            onGoToPage: (page) async =>
+                setState(() => _compactFavoritesView = page),
+            onBrowse: () => _handleSectionChange(HomeSection.watch),
             initialFocusNode: _favoritesSectionFocusNode,
           );
         }
         return FavoritesView(
           store: store,
+          playerKey: _playerKey,
           onGroupTap: _openFavoriteGroup,
           onChannelTap: _openFavoriteChannel,
           initialFocusNode: _favoritesSectionFocusNode,
+          onBrowse: () => _handleSectionChange(HomeSection.watch),
         );
       case HomeSection.playlists:
         return PlaylistManagementView(
@@ -887,194 +916,169 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  bool _hasVisiblePlayerPane(PlaylistStore store, bool compact) {
+    return switch (_section) {
+      HomeSection.watch =>
+        (store.loadingPlaylists || store.playlists.isNotEmpty) &&
+            (!compact || _compactWatchView == CompactWatchSection.viewPlayer),
+      HomeSection.favorites => !compact || _compactFavoritesView == 1,
+      HomeSection.playlists => false,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = context.watch<PlaylistStore>();
     if (_usesTvHome) return _buildTvHome(store);
     final isCompact = MediaQuery.sizeOf(context).width < kCompactBreakpoint;
-    final isSmallCompact = isCompact;
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
-
-    BottomNavigationBarItem buildBottomNavItem({
-      required IconData icon,
-      required IconData activeIcon,
-      required String label,
-    }) {
-      return BottomNavigationBarItem(
-        icon: Icon(icon),
-        activeIcon: isSmallCompact
-            ? CompactBottomNavActiveIcon(icon: activeIcon)
-            : Icon(activeIcon),
-        label: label,
-      );
-    }
-
-    Widget bodyContent = Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          if (!isCompact) ...[
-            HomeSearchBar(
-              searchCtrl: _searchCtrl,
-              store: store,
-              onChanged: _handleGlobalSearchInput,
-              onTap: _showSearchDialog,
-            ),
-            const SizedBox(height: 10),
-          ],
-          Expanded(
-            child: isCompact
-                ? _buildSection(context, store)
-                : Row(
-                    children: [
-                      HomeLeftMenu(
-                        section: _section,
-                        onChanged: _handleSectionChange,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(child: _buildSection(context, store)),
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
-
-    if (isSmallCompact) {
-      final base = Theme.of(context);
-      bodyContent = Theme(
-        data: base.copyWith(
-          textTheme: base.textTheme.apply(fontSizeFactor: 1.08),
-          listTileTheme: base.listTileTheme.copyWith(
-            minTileHeight: 56,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 4,
-            ),
-          ),
-          iconButtonTheme: IconButtonThemeData(
-            style: IconButton.styleFrom(
-              minimumSize: const Size(44, 44),
-              tapTargetSize: MaterialTapTargetSize.padded,
-            ),
-          ),
-        ),
-        child: bodyContent,
-      );
-    } else if (isAndroidTv(context)) {
-      // TV-tuned theme: scale text up, taller list tiles, larger icons.
-      // Lean-back distance means defaults are too small to read comfortably.
-      final base = Theme.of(context);
-      bodyContent = Theme(
-        data: base.copyWith(
-          textTheme: base.textTheme.apply(fontSizeFactor: kTvFontScale),
-          listTileTheme: base.listTileTheme.copyWith(
-            minTileHeight: kTvListTileMinHeight,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 6,
-            ),
-          ),
-          iconTheme: base.iconTheme.copyWith(size: 28),
-          iconButtonTheme: IconButtonThemeData(
-            style: IconButton.styleFrom(
-              minimumSize: const Size(48, 48),
-              iconSize: 26,
-            ),
-          ),
-        ),
-        child: bodyContent,
-      );
-    }
-
+    final title = switch (_section) {
+      HomeSection.watch => 'Watch',
+      HomeSection.favorites => 'Favorites',
+      HomeSection.playlists => 'Sources',
+    };
+    void openAccount() => Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const AccountScreen()));
     return Scaffold(
       appBar: isCompact
           ? AppBar(
-              title: isSmallCompact
-                  ? HomeSearchBar(
-                      searchCtrl: _searchCtrl,
-                      store: store,
-                      onChanged: _handleGlobalSearchInput,
-                      onTap: _showSearchDialog,
-                      inAppBar: true,
-                    )
-                  : null,
+              title: Text(title),
               actions: [
-                if (!isSmallCompact)
-                  IconButton(
-                    tooltip: 'Search',
-                    onPressed: () {
-                      if (_searchDialogOpen || _searchDialogPending) {
-                        return;
-                      }
-                      _showSearchDialog();
-                    },
-                    icon: const Icon(Icons.search),
-                  ),
+                IconButton(
+                  tooltip: 'Search',
+                  onPressed: _showSearchDialog,
+                  icon: const Icon(Icons.search),
+                ),
+                IconButton(
+                  tooltip: 'Account',
+                  onPressed: openAccount,
+                  icon: const Icon(Icons.person_outline),
+                ),
               ],
             )
           : null,
-      body: bodyContent,
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Padding(
+              padding: EdgeInsets.all(isCompact ? 8 : 12),
+              child: Column(
+                children: [
+                  if (!isCompact) ...[
+                    Row(
+                      children: [
+                        const Icon(Icons.play_circle_outline, size: 28),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'StreamPilot',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const SizedBox(width: 24),
+                        SizedBox(
+                          width: 220,
+                          child: SourceSelector(store: store),
+                        ),
+                        const SizedBox(width: 16),
+                        SizedBox(
+                          width: 280,
+                          child: HomeSearchBar(
+                            searchCtrl: _searchCtrl,
+                            store: store,
+                            onChanged: _handleGlobalSearchInput,
+                            onTap: _showSearchDialog,
+                            inAppBar: true,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Account',
+                          onPressed: openAccount,
+                          icon: const Icon(Icons.person_outline),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Expanded(
+                    child: isCompact
+                        ? _buildSection(context, store)
+                        : Row(
+                            children: [
+                              HomeLeftMenu(
+                                section: _section,
+                                onChanged: _handleSectionChange,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(child: _buildSection(context, store)),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (store.nowPlaying != null &&
+              !_hasVisiblePlayerPane(store, isCompact))
+            Offstage(
+              child: ExcludeFocus(
+                child: SizedBox(
+                  width: 640,
+                  height: 360,
+                  child: ChannelPlayer(
+                    key: _playerKey,
+                    store: store,
+                    streamUrl: store.nowPlaying!.streamUrl,
+                    resolveStreamUrl: () =>
+                        store.resolveChannelStreamUrl(store.nowPlaying!),
+                    isActiveRecording: store.isChannelActivelyRecording(
+                      store.nowPlaying!,
+                    ),
+                    previewFocusable: false,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+
       bottomNavigationBar: isCompact
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 150),
-                  alignment: Alignment.topCenter,
-                  child: store.nowPlaying != null
-                      ? CompactMiniPlayerBar(
-                          channel: store.nowPlaying!,
-                          iosCompact: isSmallCompact,
-                          onTap: () => _openCompactPlayer(store),
-                          onStop: store.stopPlayback,
-                        )
-                      : const SizedBox.shrink(),
-                ),
-                MediaQuery.removeViewPadding(
-                  context: context,
-                  removeBottom: true,
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      bottom: isSmallCompact ? bottomInset * 0.5 : 0,
-                    ),
-                    child: BottomNavigationBar(
-                      currentIndex: HomeSection.values.indexOf(_section),
-                      onTap: (index) async {
-                        if (isSmallCompact && index == 3) {
-                          await _requestLogoutConfirmation();
-                          return;
-                        }
-                        _handleSectionChange(HomeSection.values[index]);
-                      },
-                      type: BottomNavigationBarType.fixed,
-                      showSelectedLabels: !isSmallCompact,
-                      showUnselectedLabels: !isSmallCompact,
-                      items: [
-                        buildBottomNavItem(
-                          icon: Icons.ondemand_video_outlined,
-                          activeIcon: Icons.ondemand_video,
-                          label: 'Watch',
-                        ),
-                        buildBottomNavItem(
-                          icon: Icons.star_border,
-                          activeIcon: Icons.star,
-                          label: 'Favorites',
-                        ),
-                        buildBottomNavItem(
-                          icon: Icons.playlist_play_outlined,
-                          activeIcon: Icons.playlist_play,
-                          label: 'Playlists',
-                        ),
-                        if (isSmallCompact)
-                          buildBottomNavItem(
-                            icon: Icons.logout,
-                            activeIcon: Icons.logout,
-                            label: 'Logout',
-                          ),
-                      ],
-                    ),
+                if (store.nowPlaying != null)
+                  CompactMiniPlayerBar(
+                    channel: store.nowPlaying!,
+                    iosCompact: true,
+                    store: store,
+                    onTap: () => _openCompactPlayer(store),
+                    onStop: store.stopPlayback,
                   ),
+                NavigationBar(
+                  selectedIndex: HomeSection.values.indexOf(_section),
+                  onDestinationSelected: (index) =>
+                      _handleSectionChange(HomeSection.values[index]),
+                  labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.ondemand_video_outlined),
+                      selectedIcon: Icon(Icons.ondemand_video),
+                      label: 'Watch',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.star_border),
+                      selectedIcon: Icon(Icons.star),
+                      label: 'Favorites',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.dns_outlined),
+                      selectedIcon: Icon(Icons.dns),
+                      label: 'Sources',
+                    ),
+                  ],
                 ),
               ],
             )
@@ -1106,7 +1110,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             )
           : ChannelPlayer(
-              key: const ValueKey('tvPlayer'),
+              key: _playerKey,
               store: store,
               streamUrl: playing.streamUrl,
               resolveStreamUrl: () => store.resolveChannelStreamUrl(playing),
