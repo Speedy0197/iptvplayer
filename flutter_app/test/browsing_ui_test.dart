@@ -106,11 +106,7 @@ void main() {
     store.nowPlaying = playing;
     await tester.tap(find.byTooltip('Switch source'));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byWidgetPredicate(
-        (widget) => widget is CheckedPopupMenuItem<int> && widget.value == 2,
-      ),
-    );
+    await tester.tap(find.text('Travel TV').last);
     await tester.pumpAndSettle();
     expect(store.selectedPlaylistId, 2);
     expect(store.nowPlaying, playing);
@@ -275,9 +271,13 @@ void main() {
     await tester.enterText(find.byType(TextFormField), 'News');
     await tester.pumpAndSettle();
     expect(find.text('Sample News'), findsNWidgets(2));
+    await tester.ensureVisible(find.text('Channels only'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Channels only'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(ListTile, 'News'), findsNothing);
+    await tester.ensureVisible(find.byTooltip('Filter search by source'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Filter search by source'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Travel TV').last);

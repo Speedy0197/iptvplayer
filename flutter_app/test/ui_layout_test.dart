@@ -232,6 +232,61 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
         await capture(tester, '${layout.$1}-watch');
+        if (layout.$1.startsWith('phone')) {
+          store.groups = [
+            const Group(
+              name: 'Dazn Germany Events (Auto Update Daily)',
+              playlistId: 1,
+              channelCount: 100,
+              isFavorite: false,
+            ),
+            const Group(
+              name: 'Germany HEVC and RAW Multi Audio',
+              playlistId: 1,
+              channelCount: 102,
+              isFavorite: false,
+            ),
+            ...store.groups,
+            ...List.generate(
+              12,
+              (i) => Group(
+                name: 'Country ${i + 1}',
+                playlistId: 1,
+                channelCount: 312,
+                isFavorite: false,
+              ),
+            ),
+          ];
+          store.setSearchQuery('');
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('Switch source'));
+          await tester.pumpAndSettle();
+          await capture(tester, '${layout.$1}-source-picker');
+          await tester.tap(find.byTooltip('Close picker'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('Select group'));
+          await tester.pumpAndSettle();
+          await capture(tester, '${layout.$1}-group-picker');
+          await tester.enterText(find.byType(TextField), 'dazn');
+          await tester.pumpAndSettle();
+          await capture(tester, '${layout.$1}-group-filtered');
+          await tester.tap(find.byTooltip('Close picker'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('Search'));
+          await tester.pumpAndSettle();
+          await tester.enterText(find.byType(TextFormField), 'News');
+          await tester.testTextInput.receiveAction(TextInputAction.search);
+          await tester.pumpAndSettle();
+          await capture(tester, '${layout.$1}-search');
+          await tester.tap(find.byTooltip('Close search'));
+          await tester.pumpAndSettle();
+        } else if (layout.$1.startsWith('desktop')) {
+          await tester.tap(find.byTooltip('Select group'));
+          await tester.pumpAndSettle();
+          await capture(tester, '${layout.$1}-group-picker');
+          await tester.tap(find.text('All channels').last);
+          await tester.pumpAndSettle();
+        }
         if (!layout.$1.startsWith('tv')) {
           await tester.tap(find.text('Favorites').last);
           await tester.pumpAndSettle();

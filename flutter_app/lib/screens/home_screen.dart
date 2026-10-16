@@ -16,6 +16,7 @@ import 'home/dialogs/playlist_dialog.dart';
 import 'home/home_types.dart';
 import 'home/widgets/channels_pane.dart';
 import 'home/widgets/browse_controls.dart';
+import 'home/widgets/browse_picker.dart';
 import 'account_screen.dart';
 import 'home/widgets/compact_favorites_section.dart';
 import 'home/widgets/compact_mini_player_bar.dart';
@@ -303,10 +304,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       SystemChannels.textInput.invokeMethod<void>('TextInput.show');
     }
 
-    void handleTvImeSubmit(bool tvMode) {
-      if (!tvMode) return;
-      // Move focus to non-text node immediately so Android doesn't reopen IME
-      _searchBarActiveFocusNode.requestFocus();
+    void dismissSearchKeyboard(bool tvMode) {
+      if (tvMode) {
+        // Keep the TV search bar reachable without reopening its keyboard.
+        _searchBarActiveFocusNode.requestFocus();
+      } else {
+        _searchFieldFocusNode.unfocus();
+      }
+      SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
     }
 
     if (!_searchDialogPending) {
@@ -442,13 +447,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                             controller: _searchCtrl,
                                             focusNode: _searchFieldFocusNode,
                                             autofocus: true,
+                                            textInputAction:
+                                                TextInputAction.search,
                                             onTap: tvMode
                                                 ? reopenKeyboard
                                                 : null,
                                             onEditingComplete: () =>
-                                                handleTvImeSubmit(tvMode),
+                                                dismissSearchKeyboard(tvMode),
                                             onFieldSubmitted: (_) =>
-                                                handleTvImeSubmit(tvMode),
+                                                dismissSearchKeyboard(tvMode),
+                                            onTapOutside: tvMode
+                                                ? null
+                                                : (_) => dismissSearchKeyboard(
+                                                    false,
+                                                  ),
                                             decoration: InputDecoration(
                                               labelText:
                                                   'Search channels, groups',
@@ -495,69 +507,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ), // end Row
                           ), // end Focus(searchBarActiveFocusNode)
                           const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              ChoiceChip(
-                                label: const Text('All results'),
-                                selected: searchType == 'all',
-                                onSelected: (_) =>
-                                    setDialogState(() => searchType = 'all'),
-                              ),
-                              const SizedBox(width: 8),
-                              ChoiceChip(
-                                label: const Text('Channels only'),
-                                selected: searchType == 'channels',
-                                onSelected: (_) => setDialogState(
-                                  () => searchType = 'channels',
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('All results'),
+                                  selected: searchType == 'all',
+                                  onSelected: (_) =>
+                                      setDialogState(() => searchType = 'all'),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              ChoiceChip(
-                                label: const Text('Groups only'),
-                                selected: searchType == 'groups',
-                                onSelected: (_) =>
-                                    setDialogState(() => searchType = 'groups'),
-                              ),
-                              const SizedBox(width: 12),
-                              PopupMenuButton<int>(
-                                tooltip: 'Filter search by source',
-                                onSelected: (id) => setDialogState(
-                                  () => searchSource = id == -1 ? null : id,
-                                ),
-                                itemBuilder: (_) => [
-                                  const PopupMenuItem(
-                                    value: -1,
-                                    child: Text('All sources'),
-                                  ),
-                                  ...context
-                                      .read<PlaylistStore>()
-                                      .playlists
-                                      .map(
-                                        (p) => PopupMenuItem(
-                                          value: p.id,
-                                          child: Text(p.name),
-                                        ),
-                                      ),
-                                ],
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Text(
-                                    searchSource == null
-                                        ? 'All sources'
-                                        : context
-                                              .read<PlaylistStore>()
-                                              .playlists
-                                              .firstWhere(
-                                                (p) => p.id == searchSource,
-                                              )
-                                              .name,
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  label: const Text('Channels only'),
+                                  selected: searchType == 'channels',
+                                  onSelected: (_) => setDialogState(
+                                    () => searchType = 'channels',
                                   ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  label: const Text('Groups only'),
+                                  selected: searchType == 'groups',
+                                  onSelected: (_) => setDialogState(
+                                    () => searchType = 'groups',
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                BrowsePicker<int>(
+                                  title: 'Search sources',
+                                  tooltip: 'Filter search by source',
+                                  searchHint: 'Find a source',
+                                  value: searchSource ?? -1,
+                                  onSelected: (id) => setDialogState(
+                                    () => searchSource = id == -1 ? null : id,
+                                  ),
+                                  choices: [
+                                    const BrowseChoice(-1, 'All sources'),
+                                    ...context
+                                        .read<PlaylistStore>()
+                                        .playlists
+                                        .map((p) => BrowseChoice(p.id, p.name)),
+                                  ],
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Text(
+                                      searchSource == null
+                                          ? 'All sources'
+                                          : context
+                                                .read<PlaylistStore>()
+                                                .playlists
+                                                .firstWhere(
+                                                  (p) => p.id == searchSource,
+                                                )
+                                                .name,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                           const SizedBox(height: 8),
                           Expanded(
@@ -715,7 +723,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   }
                                 }
 
-                                return ListView(children: children);
+                                return ListView(
+                                  keyboardDismissBehavior: tvMode
+                                      ? ScrollViewKeyboardDismissBehavior.manual
+                                      : ScrollViewKeyboardDismissBehavior
+                                            .onDrag,
+                                  children: children,
+                                );
                               },
                             ),
                           ),

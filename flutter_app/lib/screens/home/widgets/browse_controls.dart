@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../services/playlist_store.dart';
+import 'browse_picker.dart';
 
 /// Selection changes browse the source without interrupting the current stream.
 class SourceSelector extends StatelessWidget {
@@ -10,19 +11,14 @@ class SourceSelector extends StatelessWidget {
     final selected = store.playlists
         .where((p) => p.id == store.selectedPlaylistId)
         .firstOrNull;
-    return PopupMenuButton<int>(
+    return BrowsePicker<int>(
+      title: 'Choose source',
       tooltip: 'Switch source',
+      searchHint: 'Find a source',
+      value: store.selectedPlaylistId ?? -1,
       enabled: store.playlists.isNotEmpty,
       onSelected: (id) => store.selectPlaylist(id, preservePlayback: true),
-      itemBuilder: (_) => store.playlists
-          .map(
-            (p) => CheckedPopupMenuItem<int>(
-              value: p.id,
-              checked: p.id == store.selectedPlaylistId,
-              child: Text(p.name),
-            ),
-          )
-          .toList(),
+      choices: [for (final p in store.playlists) BrowseChoice(p.id, p.name)],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         child: Row(
@@ -48,18 +44,17 @@ class GroupSelector extends StatelessWidget {
   final PlaylistStore store;
   const GroupSelector({super.key, required this.store});
   @override
-  Widget build(BuildContext context) => PopupMenuButton<String>(
+  Widget build(BuildContext context) => BrowsePicker<String>(
+    title: 'Channel groups',
     tooltip: 'Select group',
+    searchHint: 'Find a group',
+    value: store.selectedGroup ?? '',
     onSelected: (name) =>
         store.selectGroup(name.isEmpty ? null : name, preservePlayback: true),
-    itemBuilder: (_) => [
-      const PopupMenuItem(value: '', child: Text('All channels')),
-      ...store.groups.map(
-        (g) => PopupMenuItem(
-          value: g.name,
-          child: Text('${g.name} · ${g.channelCount}'),
-        ),
-      ),
+    choices: [
+      const BrowseChoice('', 'All channels'),
+      for (final g in store.groups)
+        BrowseChoice(g.name, g.name, channelCount: g.channelCount),
     ],
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
